@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebaseAdmin";
+import { adminDb } from '../../../lib/firebaseAdmin';
 
 function genRef(prefix="G2G") {
   const d = new Date();
