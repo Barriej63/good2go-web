@@ -1,6 +1,8 @@
+import Link from 'next/link';
+
 export default function Home() {
   return (
-    <main style={{display:"grid",placeItems:"center",minHeight:"100vh",padding:"32px"}}>
+    <main style={{display:'grid',placeItems:'center',minHeight:'100vh',padding:'32px'}}>
       <div style={{maxWidth:740}}>
         <h1 style={{marginBottom:8}}>Good2Go — Staging</h1>
         <p>Domain and environment are configured. This is the password‑protected placeholder.</p>
@@ -9,6 +11,7 @@ export default function Home() {
           <li>Worldpay/Paymark env vars loaded (live)</li>
           <li>GA4 disabled until production</li>
         </ul>
+        <p><a href="/book">→ Open Booking Module (v1)</a></p>
       </div>
     </main>
   );
