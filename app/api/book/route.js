@@ -1,5 +1,9 @@
+// app/api/book/route.js
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '../../../lib/firebaseAdmin';
+
+// Ensure this route is always executed at request time (not statically optimized)
+export const dynamic = 'force-dynamic';
 
 function genRef(prefix = 'G2G') {
   const d = new Date();
@@ -9,21 +13,39 @@ function genRef(prefix = 'G2G') {
   return `${prefix}-${stamp}-${rand}`;
 }
 
+// Simple health probe: lets us confirm the server can boot Admin SDK
+export async function GET() {
+  try {
+    const db = getAdminDb();
+    // do a very light call that doesn't write
+    await db.listCollections(); // succeeds if credentials are valid
+    return NextResponse.json({ ok: true, env: 'staging', admin: 'ready' });
+  } catch (e) {
+    console.error('GET /api/book health error:', e);
+    return NextResponse.json(
+      { ok: false, error: 'admin_init_failed' },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(req) {
   try {
     const body = await req.json();
 
     const required = ['name','email','region','slot','venue','referringName','consentAccepted'];
     for (const k of required) {
-      if (!body[k]) return NextResponse.json({ error: `Missing field: ${k}` }, { status: 400 });
+      if (!body[k]) {
+        return NextResponse.json({ error: `Missing field: ${k}` }, { status: 400 });
+      }
     }
     if (body.consentAccepted !== true) {
       return NextResponse.json({ error: 'Consent is required' }, { status: 400 });
     }
 
-    const adminDb = getAdminDb(); // lazy init here (prevents build‑time init)
-    const bookingRef = genRef(process.env.NEXT_PUBLIC_BOOKING_REF_PREFIX || 'G2G');
+    const adminDb = getAdminDb();
 
+    const bookingRef = genRef(process.env.NEXT_PUBLIC_BOOKING_REF_PREFIX || 'G2G');
     const payload = {
       clientName: body.name,
       email: body.email,
@@ -44,8 +66,11 @@ export async function POST(req) {
     const doc = await adminDb.collection('bookings').add(payload);
     return NextResponse.json({ ok: true, id: doc.id, bookingRef });
   } catch (e) {
-    console.error('book POST error', e);
-    return NextResponse.json({ error: 'Server error' }, { status: 500 });
+    console.error('POST /api/book error:', e);
+    // Return a compact error string so we can see it in the client/network panel
+    return NextResponse.json(
+      { error: 'server_error' },
+      { status: 500 }
+    );
   }
 }
-
