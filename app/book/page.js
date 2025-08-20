@@ -1,6 +1,5 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { db } from '../../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 const REGIONS = [
@@ -46,46 +45,45 @@ export default function BookPage() {
     setForm(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    if (!form.name || !form.email || !form.region || !form.slot || !form.venue || !form.referringName) {
-      setError('Please fill in all required fields.');
-      return;
-    }
-    if (!form.consentAccepted) {
-      setError('You must accept the privacy/consent terms to proceed.');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const bookingRef = genRef(process.env.NEXT_PUBLIC_BOOKING_REF_PREFIX || 'G2G');
-      const payload = {
-        clientName: form.name,
+ const handleSubmit = async (e) => {
+  e.preventDefault();
+  setError("");
+
+  const required = ["name","email","region","slot","venue","referringName"];
+  for (const k of required) if (!form[k]) {
+    setError("Please fill in all required fields."); return;
+  }
+  if (!form.consentAccepted) {
+    setError("You must accept the privacy/consent terms to proceed."); return;
+  }
+
+  setSubmitting(true);
+  try {
+    const res = await fetch("/api/book", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: form.name,
         email: form.email,
-        phone: form.phone || '',
+        phone: form.phone,
         region: REGIONS.find(r => r.id === form.region)?.label || form.region,
-        date: form.slot.split(' ')[0] || 'TBD',
-        time: form.slot,
+        slot: form.slot,
         venue: form.venue,
-        referringProfessional: { name: form.referringName },
-        consent: {
-          accepted: true,
-          acceptedAt: new Date(),
-          duration: form.consentDuration
-        },
-        createdAt: serverTimestamp(),
-        bookingRef
-      };
-      const docRef = await addDoc(collection(db, 'bookings'), payload);
-      setResult({ bookingRef, id: docRef.id });
-    } catch (err) {
-      console.error(err);
-      setError('Failed to create booking. Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
+        referringName: form.referringName,
+        consentAccepted: form.consentAccepted,
+        consentDuration: form.consentDuration,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed");
+    setResult({ bookingRef: data.bookingRef, id: data.id });
+  } catch (err) {
+    console.error(err);
+    setError("Failed to create booking. Please try again.");
+  } finally {
+    setSubmitting(false);
+  }
+};
 
   return (
     <main style={{maxWidth:780, margin:'40px auto', padding:'0 20px'}}>
