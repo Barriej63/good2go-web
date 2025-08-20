@@ -1,21 +1,20 @@
+import { NextResponse } from "next/server";
+
 export function middleware(req) {
-  const basicAuth = req.headers.get('authorization')
-  const username = process.env.STAGING_USERNAME
-  const password = process.env.STAGING_PASSWORD
+  const USER = process.env.STAGING_USERNAME;
+  const PASS = process.env.STAGING_PASSWORD;
+  if (!USER || !PASS) return NextResponse.next();
 
-  if (basicAuth) {
-    const authValue = basicAuth.split(' ')[1]
-    const [user, pwd] = Buffer.from(authValue, 'base64').toString().split(':')
-    if (user === username && pwd === password) {
-      return
-    }
+  const auth = req.headers.get("authorization") || "";
+  const [scheme, b64] = auth.split(" ");
+  if (scheme === "Basic" && b64) {
+    const [u, p] = atob(b64).split(":");
+    if (u === USER && p === PASS) return NextResponse.next();
   }
-  return new Response('Auth required', {
+  return new NextResponse("Authentication required", {
     status: 401,
-    headers: { 'WWW-Authenticate': 'Basic realm="Secure Area"' },
-  })
+    headers: { "WWW-Authenticate": 'Basic realm="Staging"' },
+  });
 }
 
-export const config = {
-  matcher: ['/', '/api/:path*'],
-}
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
