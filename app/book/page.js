@@ -1,6 +1,6 @@
 'use client';
 import { useState, useMemo } from 'react';
-import { db } from '@/lib/firebase';
+import { db } from '../../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 const REGIONS = [
