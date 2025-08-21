@@ -21,10 +21,10 @@ const schema = z.object({
 });
 
 function normalizeEnv(val?: string) {
-  const s = (val || '').toLowerCase().trim();
-  if (['prod', 'production', 'live'].includes(s)) return 'prod';
-  if (['uat', 'test', 'testing', 'sandbox', 'staging', 'dev', 'development'].includes(s)) return 'uat';
-  return 'uat';
+  const s = (val || "").toLowerCase().trim();
+  if (["prod", "production", "live"].includes(s)) return "prod";
+  if (["uat", "test", "testing", "sandbox", "staging", "dev", "development"].includes(s)) return "uat";
+  return "uat";
 }
 
 function getPaymarkConfig() {
@@ -48,10 +48,10 @@ export async function POST(req: NextRequest) {
   const { username, password, accountId, env, referencePrefix, returnUrlEnv } = getPaymarkConfig();
   if (!username || !password || !accountId) {
     return NextResponse.json({ error: "Worldline/Paymark env not fully configured." }, { status: 500 });
-    }
+  }
 
   const origin = req.headers.get("origin") || new URL(req.url).origin;
-  const returnUrl = (returnUrlEnv && returnUrlEnv.length > 0) ? returnUrlEnv : `${origin}/api/worldline/return`;
+  const returnUrl = returnUrlEnv && returnUrlEnv.length ? returnUrlEnv : `${origin}/api/worldline/return`;
 
   const prodSnap = await adminDb.collection("products").doc(parsed.data.productId).get();
   if (!prodSnap.exists) return NextResponse.json({ error: "Product not found." }, { status: 400 });
@@ -71,16 +71,17 @@ export async function POST(req: NextRequest) {
     createdAt: new Date(),
   });
 
-  const endpoint = env === "prod"
-    ? "https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest"
-    : "https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest";
+  const endpoint =
+    env === "prod"
+      ? "https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest"
+      : "https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest";
 
   const form = new URLSearchParams();
   form.set("username", username);
   form.set("password", password);
   form.set("account_id", accountId);
   form.set("cmd", "_xclick");
-  form.set("amount", (priceCents/100).toFixed(2));
+  form.set("amount", (priceCents / 100).toFixed(2));
   form.set("type", "purchase");
   form.set("reference", `${referencePrefix}-${pendingRef.id.slice(-8)}`);
   form.set("particular", JSON.stringify({ bookingId: pendingRef.id, productId: parsed.data.productId }));
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const res = await axios.post(endpoint, form.toString(), {
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/xml" },
       timeout: 120000,
     });
     const text: string = typeof res.data === "string" ? res.data : String(res.data);
@@ -100,3 +101,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: e.message || "Worldline request failed" }, { status: 500 });
   }
 }
+
