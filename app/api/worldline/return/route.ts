@@ -7,10 +7,10 @@ import { adminDb } from "@/src/firebaseAdmin";
 import { sendEmail } from "@/src/email";
 
 function normalizeEnv(val?: string) {
-  const s = (val || "").toLowerCase().trim();
-  if (["prod", "production", "live"].includes(s)) return "prod";
-  if (["uat", "test", "testing", "sandbox", "staging", "dev", "development"].includes(s)) return "uat";
-  return "uat";
+  const s = (val || '').toLowerCase().trim();
+  if (['prod', 'production', 'live'].includes(s)) return 'prod';
+  if (['uat', 'test', 'testing', 'sandbox', 'staging', 'dev', 'development'].includes(s)) return 'uat';
+  return 'uat';
 }
 
 function getPaymarkAuth() {
@@ -23,13 +23,12 @@ function getPaymarkAuth() {
 
 async function verifyTransaction(transactionId: string) {
   const { username, password, env } = getPaymarkAuth();
-  const base =
-    env === "prod"
-      ? "https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest"
-      : "https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest";
+  const base = env === "prod"
+    ? "https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest"
+    : "https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest";
   const url = `${base}/?cmd=_xclick&transaction_id=${encodeURIComponent(transactionId)}`;
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
-  const res = await axios.get(url, { headers: { Authorization: `Basic ${auth}` } });
+  const res = await axios.get(url, { headers: { "Authorization": `Basic ${auth}` } });
   const text: string = typeof res.data === "string" ? res.data : String(res.data);
   return text;
 }
@@ -45,11 +44,16 @@ export async function POST(req: NextRequest) {
   const verification = await verifyTransaction(TransactionId);
   const ok = /<status>1<\/status>|Status>1/i.test(verification) || /SUCCESS/i.test(verification);
 
+  // Accept both JSON and "BID:<id>"
   let bookingId: string | null = null;
-  try {
-    const p = JSON.parse(Particular);
-    bookingId = p.bookingId || null;
-  } catch {}
+  if (Particular.startsWith("BID:")) {
+    bookingId = Particular.slice(4);
+  } else {
+    try {
+      const p = JSON.parse(Particular);
+      bookingId = p.bookingId || p.id || null;
+    } catch {}
+  }
 
   if (!bookingId) return NextResponse.redirect(new URL("/cancel", req.url));
 
@@ -79,4 +83,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.redirect(new URL("/cancel", req.url));
   }
 }
-
