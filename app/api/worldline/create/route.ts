@@ -9,6 +9,7 @@ import { adminDb } from "@/src/firebaseAdmin";
 const schema = z.object({
   productId: z.string(),
   region: z.string(),
+  date: z.string(),   // <-- add this
   slot: z.object({
     weekday: z.string(),
     start: z.string(),
@@ -61,15 +62,16 @@ export async function POST(req: NextRequest) {
   if (!priceCents || priceCents <= 0) return NextResponse.json({ error: "Invalid product price." }, { status: 400 });
 
   const pendingRef = await adminDb.collection("bookings").add({
-    region: parsed.data.region,
-    slot: parsed.data.slot,
-    name: parsed.data.name,
-    email: parsed.data.email,
-    product: { id: parsed.data.productId, name: prod.name },
-    amount: priceCents,
-    status: "pending",
-    createdAt: new Date(),
-  });
+  region: parsed.data.region,
+  date: parsed.data.date,     // <-- store the exact day
+  slot: parsed.data.slot,
+  name: parsed.data.name,
+  email: parsed.data.email,
+  product: { id: parsed.data.productId, name: prod.name },
+  amount: priceCents,
+  status: "pending",
+  createdAt: new Date(),
+});
 
   const endpoint =
     env === "prod"
