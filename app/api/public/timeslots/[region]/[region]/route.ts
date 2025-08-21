@@ -2,15 +2,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchSlotsForRegion } from "./helper";
+import { fetchSlotsForRegion } from "../helper";
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest, { params }: { params: { region: string } }) {
   try {
-    const { searchParams } = new URL(req.url);
-    const region = searchParams.get("region");
-    if (!region) {
-      return NextResponse.json({ ok: false, error: "Missing ?region=" }, { status: 400 });
-    }
+    const region = decodeURIComponent(params.region);
     const slots = await fetchSlotsForRegion(region);
     return NextResponse.json({ ok: true, slots });
   } catch (e: any) {
