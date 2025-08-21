@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import axios from "axios";
 import { z } from "zod";
@@ -11,7 +14,7 @@ const schema = z.object({
     start: z.string(),
     end: z.string(),
     venueAddress: z.string().optional(),
-    note: z.string().optional()
+    note: z.string().optional(),
   }),
   name: z.string(),
   email: z.string().email(),
@@ -23,7 +26,6 @@ function normalizeEnv(val?: string) {
   if (['uat', 'test', 'testing', 'sandbox', 'staging', 'dev', 'development'].includes(s)) return 'uat';
   return 'uat';
 }
-
 
 function getPaymarkConfig() {
   const username = process.env.WORLDLINE_USERNAME || process.env.PAYMARK_CLIENT_ID;
@@ -39,12 +41,14 @@ function getPaymarkConfig() {
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const parsed = schema.safeParse(body);
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.message }, { status: 400 });
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.message }, { status: 400 });
+  }
 
   const { username, password, accountId, env, referencePrefix, returnUrlEnv } = getPaymarkConfig();
   if (!username || !password || !accountId) {
     return NextResponse.json({ error: "Worldline/Paymark env not fully configured." }, { status: 500 });
-  }
+    }
 
   const origin = req.headers.get("origin") || new URL(req.url).origin;
   const returnUrl = (returnUrlEnv && returnUrlEnv.length > 0) ? returnUrlEnv : `${origin}/api/worldline/return`;
