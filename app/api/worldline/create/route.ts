@@ -27,7 +27,6 @@ function normalizeEnv(val?: string) {
   if (['uat', 'test', 'testing', 'sandbox', 'staging', 'dev', 'development'].includes(s)) return 'uat';
   return 'uat';
 }
-
 function getPaymarkConfig() {
   const username = process.env.WORLDLINE_USERNAME || process.env.PAYMARK_CLIENT_ID;
   const password = process.env.WORLDLINE_PASSWORD || process.env.PAYMARK_API_KEY;
@@ -38,6 +37,36 @@ function getPaymarkConfig() {
   const returnUrlEnv = process.env.WORLDLINE_RETURN_URL;
   return { username, password, accountId, env, referencePrefix, returnUrlEnv };
 }
+
+
+function htmlUnescape(s: string) {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function extractHppUrl(xml: string) {
+  const urlRegex = /https?:\/\/[^\s<">]+/gi;
+  const allRaw = xml.match(urlRegex) || [];
+  const all = Array.from(new Set(allRaw.map(u => htmlUnescape(u.trim()))));
+
+  // Filter out XML namespace / schema URLs
+  const filtered = all.filter(u => !/schemas\.microsoft\.com|w3\.org\/2001\/XMLSchema/i.test(u));
+
+  // Prefer Paymark Click domain
+  const paymark = filtered.find(u => /paymarkclick\.co\.nz/i.test(u));
+  if (paymark) return { chosen: paymark, urls: all };
+
+  // Otherwise, prefer any https URL that isn't a schema
+  if (filtered.length) return { chosen: filtered[0], urls: all };
+
+  // Fallback: first seen
+  return { chosen: all[0] || '', urls: all };
+}
+
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -78,11 +107,9 @@ export async function POST(req: NextRequest) {
     : "https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest";
 
   const reference = `${referencePrefix}-${pendingRef.id.slice(-8)}`;
+  const particular = `BID:${pendingRef.id}`;
 
-  // Keep particular under 50 chars per Worldline error 5023
-  const particular = `BID:${pendingRef.id}`; // ~24 chars
-
-  // Use FORM credentials (no Basic header)
+  // FORM credentials
   const form = new URLSearchParams();
   form.set("username", username);
   form.set("password", password);
@@ -96,22 +123,22 @@ export async function POST(req: NextRequest) {
 
   try {
     const res = await axios.post(endpoint, form.toString(), {
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/xml, text/xml, */*"
+      },
       validateStatus: () => true,
       timeout: 120000,
     });
-
     const text: string = typeof res.data === "string" ? res.data : String(res.data);
     if (res.status >= 400) {
-      return NextResponse.json({ error: `Worldline ${res.status}: ${text.slice(0, 500)}` }, { status: 500 });
+      return NextResponse.json({ error: `Worldline ${res.status}: ${text.slice(0, 800)}` }, { status: 500 });
     }
-
-    const match = text.match(/https?:[^<\s"]+/i);
-    if (!match) {
-      return NextResponse.json({ error: `Could not find Hosted Payment Page URL in response: ${text.slice(0, 500)}` }, { status: 500 });
+    const { chosen, urls } = extractHppUrl(text);
+    if (!chosen) {
+      return NextResponse.json({ error: `Could not find Hosted Payment Page URL in response`, urls }, { status: 500 });
     }
-    const redirectUrl = match[0];
-    return NextResponse.json({ redirectUrl, env });
+    return NextResponse.json({ redirectUrl: chosen });
   } catch (e: any) {
     return NextResponse.json({ error: e.message || "Worldline request failed" }, { status: 500 });
   }
