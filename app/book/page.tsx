@@ -1,41 +1,32 @@
 'use client';
+
 import { useEffect, useState } from 'react';
-import { z } from 'zod';
 
-const REGIONS = ['Auckland', 'Waikato', 'Bay of Plenty'];
-
-const FormSchema = z.object({
-  productId: z.string().min(1),
-  region: z.string().min(1),
-  slot: z.string().min(1),
-  name: z.string().min(2),
-  email: z.string().email(),
-});
-
+type Product = { id: string; name: string; priceCents: number; active: boolean };
 type Slot = { weekday: string; start: string; end: string; venueAddress?: string; note?: string };
-type Product = { id:string; name:string; priceCents:number; active:boolean; };
+
+const REGIONS = ['Auckland', 'Waikato', 'Bay of Plenty']; // edit as needed
 
 export default function BookPage() {
-  const [region, setRegion] = useState('Waikato');
-  const [slots, setSlots] = useState<{label:string,value:string}[]>([]);
-  const [slot, setSlot] = useState('');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [region, setRegion] = useState('Auckland');
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [slotJson, setSlotJson] = useState('');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   async function loadProducts() {
+    setError(null);
     try {
       const res = await fetch('/api/public/products', { cache: 'no-store' });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed to load products');
-      const list: Product[] = data.products || [];
-      setProducts(list);
-      setProductId(list[0]?.id || '');
-    } catch (e:any) {
-      console.error(e);
+      setProducts(data.products || []);
+      setProductId((data.products?.[0]?.id) || '');
+    } catch (e: any) {
       setError(e.message);
     }
   }
@@ -43,19 +34,15 @@ export default function BookPage() {
   async function loadSlots(reg: string) {
     setError(null);
     try {
-      const res = await fetch('/api/public/timeslots?region=' + encodeURIComponent(reg), { cache: 'no-store' });
+      const res = await fetch(`/api/public/timeslots?region=${encodeURIComponent(reg)}`, { cache: 'no-store' });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed to load timeslots');
-      const opts = (data.slots || []).map((s: Slot) => ({
-        label: `${s.weekday} ${s.start}-${s.end} @ ${s.venueAddress || 'TBC'}`,
-        value: JSON.stringify(s),
-      }));
-      setSlots(opts);
-      setSlot('');
-    } catch (e:any) {
-      console.error(e);
-      setSlots([]);
+      setSlots(data.slots || []);
+      setSlotJson('');
+    } catch (e: any) {
       setError(e.message);
+      setSlots([]);
+      setSlotJson('');
     }
   }
 
@@ -64,73 +51,92 @@ export default function BookPage() {
 
   async function submit() {
     setError(null);
-    const parsed = FormSchema.safeParse({ productId, region, slot, name, email });
-    if (!parsed.success) {
-      setError(parsed.error.errors[0]?.message || 'Check the form.');
-      return;
+    if (!productId || !region || !slotJson || !name || !email) {
+      setError('Please complete all fields.'); return;
     }
     try {
       setLoading(true);
       const res = await fetch('/api/worldline/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           productId,
-          region, 
-          slot: JSON.parse(slot), 
-          name, 
-          email 
+          region,
+          slot: JSON.parse(slotJson), // {weekday,start,end,venueAddress?}
+          name,
+          email,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
       const { redirectUrl } = await res.json();
       window.location.href = redirectUrl;
-    } catch (e:any) {
-      setError(e.message || 'Something went wrong.');
+    } catch (e: any) {
+      setError(e.message || 'Payment setup failed.');
     } finally {
       setLoading(false);
     }
   }
 
-  const selected = products.find(p=>p.id===productId);
+  const selected = products.find(p => p.id === productId);
 
   return (
-    <section>
-      <h2>Book a Session</h2>
+    <section style={{maxWidth: 640, margin: '24px auto', padding: 16}}>
+      <h1 style={{marginBottom: 16}}>Book a Good2Go Session</h1>
+
       <label>Product<br/>
-        <select value={productId} onChange={e=>setProductId(e.target.value)}>
+        <select value={productId} onChange={e => setProductId(e.target.value)} style={{width:'100%'}}>
           {products.length === 0 && <option value="">Loading…</option>}
           {products.map(p => (
-            <option key={p.id} value={p.id}>{p.name} — ${(p.priceCents/100).toFixed(2)}</option>
+            <option key={p.id} value={p.id}>
+              {p.name} — ${(p.priceCents/100).toFixed(2)}
+            </option>
           ))}
         </select>
       </label>
-      <br/>
+
+      <div style={{height:12}} />
+
       <label>Region<br/>
-        <select value={region} onChange={e=>setRegion(e.target.value)}>
+        <select value={region} onChange={e => setRegion(e.target.value)} style={{width:'100%'}}>
           {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
       </label>
-      <br/>
+
+      <div style={{height:12}} />
+
       <label>Time Slot<br/>
-        <select value={slot} onChange={e=>setSlot(e.target.value)}>
+        <select value={slotJson} onChange={e => setSlotJson(e.target.value)} style={{width:'100%'}}>
           <option value="">{slots.length ? 'Select…' : 'No slots available'}</option>
-          {slots.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          {slots.map((s, i) => (
+            <option key={i} value={JSON.stringify(s)}>
+              {s.weekday} {s.start}-{s.end} @ {s.venueAddress || 'TBC'}
+            </option>
+          ))}
         </select>
       </label>
-      <br/>
+
+      <div style={{height:12}} />
+
       <label>Full Name<br/>
-        <input value={name} onChange={e=>setName(e.target.value)} />
+        <input value={name} onChange={e => setName(e.target.value)} style={{width:'100%'}} />
       </label>
-      <br/>
+
+      <div style={{height:12}} />
+
       <label>Email<br/>
-        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} />
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={{width:'100%'}} />
       </label>
-      <br/>
-      {selected && <p><b>Total:</b> ${(selected.priceCents/100).toFixed(2)}</p>}
+
+      {selected && <p style={{marginTop:12}}><b>Total:</b> ${(selected.priceCents/100).toFixed(2)}</p>}
       {error && <p style={{color:'#b00'}}>{error}</p>}
-      <button onClick={submit} disabled={loading || !productId || !slot}>{loading ? 'Processing…' : 'Proceed to Payment'}</button>
-      <p style={{marginTop:16, color:'#777'}}>You will be redirected to a secure Worldline (Paymark Click) payment page.</p>
+
+      <button onClick={submit} disabled={loading || !productId || !slotJson}
+              style={{marginTop:12, padding:'8px 14px'}}>
+        {loading ? 'Processing…' : 'Proceed to Payment'}
+      </button>
+
+      <p style={{marginTop:16, color:'#666'}}>You’ll be redirected to Worldline (Paymark Click) to complete payment.</p>
     </section>
   );
 }
+
