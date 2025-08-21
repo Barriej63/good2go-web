@@ -79,7 +79,10 @@ export async function POST(req: NextRequest) {
 
   const reference = `${referencePrefix}-${pendingRef.id.slice(-8)}`;
 
-  // FORM AUTH: include username & password in the body
+  // Keep particular under 50 chars per Worldline error 5023
+  const particular = `BID:${pendingRef.id}`; // ~24 chars
+
+  // Use FORM credentials (no Basic header)
   const form = new URLSearchParams();
   form.set("username", username);
   form.set("password", password);
@@ -88,7 +91,7 @@ export async function POST(req: NextRequest) {
   form.set("amount", (priceCents/100).toFixed(2));
   form.set("type", "purchase");
   form.set("reference", reference);
-  form.set("particular", JSON.stringify({ bookingId: pendingRef.id, productId: parsed.data.productId }));
+  form.set("particular", particular);
   form.set("return_url", returnUrl);
 
   try {
