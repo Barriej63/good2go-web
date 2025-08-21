@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
   form.set("cmd", "_xclick");
   form.set("amount", (priceCents/100).toFixed(2));
   form.set("type", "purchase");
-  form.set("currency", "NZD");
+  // removed currency per Worldline whitelist error 8001
   form.set("reference", reference);
   form.set("particular", JSON.stringify({ bookingId: pendingRef.id, productId: parsed.data.productId }));
   form.set("return_url", returnUrl);
@@ -103,12 +103,12 @@ export async function POST(req: NextRequest) {
 
     const text: string = typeof res.data === "string" ? res.data : String(res.data);
     if (res.status >= 400) {
-      return NextResponse.json({ error: `Worldline ${res.status}: ${text.slice(0, 400)}` }, { status: 500 });
+      return NextResponse.json({ error: `Worldline ${res.status}: ${text.slice(0, 500)}` }, { status: 500 });
     }
 
     const match = text.match(/https?:[^<\s"]+/i);
     if (!match) {
-      return NextResponse.json({ error: `Could not find Hosted Payment Page URL in response: ${text.slice(0, 400)}` }, { status: 500 });
+      return NextResponse.json({ error: `Could not find Hosted Payment Page URL in response: ${text.slice(0, 500)}` }, { status: 500 });
     }
     const redirectUrl = match[0];
     return NextResponse.json({ redirectUrl, env });
