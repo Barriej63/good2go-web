@@ -1,64 +1,65 @@
 // app/api/worldline/test/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-type Attempt = { host: string; path: string; url: string; status: number; ok: boolean; contentType?: string; redirectUrl?: string | null; rawPreview: string };
-
-const HOSTS = [
-  { label: "production", base: "https://secure.paymarkclick.co.nz" },
-  { label: "uat", base: "https://secure.uat.paymarkclick.co.nz" },
-];
-const PATHS = ["/api/transactions", "/api/transaction", "/api/Transactions"];
-
-function extractUrl(xml: string): string | null {
-  const all = Array.from(xml.matchAll(/\bhttps?:\/\/[^\s<>"']+/gi)).map(m => m[0]);
-  const filtered = all.filter(u => /paymarkclick\.co\.nz/i.test(u) && !/w3\.org|schemas\.microsoft\.com/i.test(u));
-  return filtered.find(u => u.startsWith("https://")) || filtered[0] || null;
+function getEndpointBase(): { envMode: string; base: string } {
+  const envMode = (process.env.WORLDLINE_ENV || "uat").toLowerCase();
+  const isProd = ["production", "prod", "live"].includes(envMode);
+  return {
+    envMode: isProd ? "production" : "uat",
+    base: isProd
+      ? "https://secure.paymarkclick.co.nz/api/"
+      : "https://secure.uat.paymarkclick.co.nz/api/",
+  };
 }
 
-async function tryPost(url: string, form: URLSearchParams) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml, text/xml, */*" },
-    body: form.toString(),
-  }).catch((e) => ({
-    ok: false, status: 0, headers: new Headers(), text: async () => String(e?.message || "fetch error"),
-  } as any));
-  const raw = await res.text();
-  const ct = res.headers.get("content-type") || "";
-  const redirectUrl = /xml|text\/xml/i.test(ct) ? extractUrl(raw) : null;
-  return { status: (res as any).status ?? 0, ok: (res as any).ok ?? false, contentType: ct, redirectUrl, raw };
+function extractUrls(xml: string): string[] {
+  const urls = new Set<string>();
+  for (const m of xml.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) urls.add(m[1]);
+  for (const m of xml.matchAll(/\bhttps?:\/\/[^\s<>"']+/gi)) urls.add(m[0]);
+  for (const m of xml.matchAll(/<(HostedPaymentPage|RedirectUrl|HostedPaymentPageLink)[^>]*>([^<]+)<\/\1>/gi)) {
+    urls.add(m[2]);
+  }
+  return Array.from(urls).filter(u => /^https?:\/\//i.test(u) && !/schemas\.microsoft\.com|w3\.org\/TR\/xhtml1/i.test(u));
+}
+
+function pickHppUrl(urls: string[]): string | null {
+  const candidates = urls.filter(u => /paymarkclick\.co\.nz/i.test(u));
+  const byHttps = (arr: string[]) => arr.sort((a,b) => (b.startsWith("https://")?1:0) - (a.startsWith("https://")?1:0));
+  const first = (arr: string[]) => arr.length ? byHttps(arr)[0] : null;
+  return first(candidates) ?? first(urls);
 }
 
 export async function GET(_req: NextRequest) {
   try {
-    if ((process.env.WORLDLINE_TEST_ENABLED || "").toLowerCase() !== "true") {
-      return NextResponse.json({ error: "Disabled. Set WORLDLINE_TEST_ENABLED=true temporarily." }, { status: 403 });
-    }
-    const USER = process.env.WORLDLINE_USERNAME || "";
-    const PASS = process.env.WORLDLINE_PASSWORD || "";
-    const ACCT = process.env.WORLDLINE_ACCOUNT_ID || "";
-    if (!USER || !PASS || !ACCT) {
-      return NextResponse.json({ error: "Missing Worldline env" }, { status: 500 });
+    const USERNAME = process.env.WORLDLINE_USERNAME || "";
+    const PASSWORD = process.env.WORLDLINE_PASSWORD || "";
+    const ACCOUNT  = process.env.WORLDLINE_ACCOUNT_ID || "";
+    if (!USERNAME || !PASSWORD || !ACCOUNT) {
+      return NextResponse.json({ ok:false, error: "Missing Worldline env vars." }, { status: 500 });
     }
 
+    const { envMode, base } = getEndpointBase();
     const form = new URLSearchParams({
-      username: USER, password: PASS, accountid: ACCT,
-      amount: "1.00", particular: "TEST:matrix",
+      username: USERNAME,
+      password: PASSWORD,
+      accountid: ACCOUNT,
+      amount: "1.00",
+      particular: "TEST:diagnostic",
     });
 
-    const attempts: Attempt[] = [];
-    for (const host of HOSTS) {
-      for (const path of PATHS) {
-        const url = `${host.base}${path}`;
-        const { status, ok, contentType, redirectUrl, raw } = await tryPost(url, form);
-        attempts.push({ host: host.label, path, url, status, ok, contentType, redirectUrl, rawPreview: raw.slice(0, 350) });
-        if (ok && redirectUrl) {
-          return NextResponse.json({ ok: true, envGuess: host.label, endpoint: url, redirectUrl, attempts });
-        }
-      }
-    }
-    return NextResponse.json({ ok: false, message: "No working endpoint found. Likely env/credential mismatch or HPP not enabled.", attempts }, { status: 502 });
-  } catch (e:any) {
-    return NextResponse.json({ error: e?.message || "Unexpected error" }, { status: 500 });
+    const url = base + "transactions"; // locked to plural
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml, text/xml, */*" },
+      body: form.toString(),
+    });
+
+    const raw = await res.text();
+    const urls = extractUrls(raw);
+    const redirectUrl = pickHppUrl(urls);
+
+    return NextResponse.json({ ok: res.ok && !!redirectUrl, status: res.status, redirectUrl: redirectUrl || null, urls, raw: raw.slice(0, 1000), env: envMode, endpoint: url }, { status: res.ok ? 200 : 502 });
+  } catch (err: any) {
+    return NextResponse.json({ ok:false, error: err?.message || "Unexpected error" }, { status: 500 });
   }
 }
