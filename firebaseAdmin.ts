@@ -1,0 +1,49 @@
+import * as admin from "firebase-admin";
+
+/**
+ * Robust lazy init for Firebase Admin.
+ * - Prefer FIREBASE_SERVICE_ACCOUNT (full JSON)
+ * - Fallback to FIREBASE_PROJECT_ID/CLIENT_EMAIL/PRIVATE_KEY
+ * - Handles \n-escaped private keys
+ */
+let inited = false;
+
+function init() {
+  if (inited) return;
+  if (admin.apps.length) { inited = true; return; }
+
+  const svc = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (svc) {
+    const sa = JSON.parse(svc);
+    admin.initializeApp({
+      credential: admin.credential.cert(sa as admin.ServiceAccount),
+      projectId: sa.project_id,
+    });
+    inited = true;
+    return;
+  }
+
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error("Missing Firebase Admin env (provide FIREBASE_SERVICE_ACCOUNT or 3 vars).");
+  }
+  if (privateKey.includes("\\n")) privateKey = privateKey.replace(/\\n/g, "\n");
+
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId,
+      clientEmail,
+      privateKey,
+    } as admin.ServiceAccount),
+    projectId,
+  });
+  inited = true;
+}
+
+export function getAdminDb() {
+  init();
+  return admin.firestore();
+}
