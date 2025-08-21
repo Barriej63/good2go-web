@@ -1,7 +1,5 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { db } from '@/src/firebase';
-import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { z } from 'zod';
 
 const REGIONS = ['Auckland', 'Waikato', 'Bay of Plenty'];
@@ -14,6 +12,7 @@ const FormSchema = z.object({
   email: z.string().email(),
 });
 
+type Slot = { weekday: string; start: string; end: string; venueAddress?: string; note?: string };
 type Product = { id:string; name:string; priceCents:number; active:boolean; };
 
 export default function BookPage() {
@@ -27,34 +26,41 @@ export default function BookPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadSlots() {
-      setError(null);
-      const ref = doc(db, 'config', `timeslots_${region}`);
-      const snap = await getDoc(ref);
-      const data = snap.exists() ? snap.data() as any : { slots: [] };
-      setSlots((data.slots || []).map((s:any) => ({ label: `${s.weekday} ${s.start}-${s.end} @ ${s.venueAddress || 'TBC'}`, value: JSON.stringify(s) })));
+  async function loadProducts() {
+    try {
+      const res = await fetch('/api/public/products', { cache: 'no-store' });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to load products');
+      const list: Product[] = data.products || [];
+      setProducts(list);
+      setProductId(list[0]?.id || '');
+    } catch (e:any) {
+      console.error(e);
+      setError(e.message);
     }
-    loadSlots();
-  }, [region]);
+  }
 
-  useEffect(() => {
-    async function loadProducts() {
-      try {
-        const snap = await getDocs(collection(db, 'products'));
-        const list: Product[] = snap.docs
-          .map(d => ({ id:d.id, ...(d.data() as any) }))
-          .filter(p => p.active === true)
-          .sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
-        setProducts(list);
-        setProductId(list[0]?.id || '');
-      } catch (e) {
-        console.error('Load products failed:', e);
-        setProducts([]);
-      }
+  async function loadSlots(reg: string) {
+    setError(null);
+    try {
+      const res = await fetch('/api/public/timeslots?region=' + encodeURIComponent(reg), { cache: 'no-store' });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to load timeslots');
+      const opts = (data.slots || []).map((s: Slot) => ({
+        label: `${s.weekday} ${s.start}-${s.end} @ ${s.venueAddress || 'TBC'}`,
+        value: JSON.stringify(s),
+      }));
+      setSlots(opts);
+      setSlot('');
+    } catch (e:any) {
+      console.error(e);
+      setSlots([]);
+      setError(e.message);
     }
-    loadProducts();
-  }, []);
+  }
+
+  useEffect(() => { loadProducts(); }, []);
+  useEffect(() => { loadSlots(region); }, [region]);
 
   async function submit() {
     setError(null);
@@ -93,6 +99,7 @@ export default function BookPage() {
       <h2>Book a Session</h2>
       <label>Product<br/>
         <select value={productId} onChange={e=>setProductId(e.target.value)}>
+          {products.length === 0 && <option value="">Loading…</option>}
           {products.map(p => (
             <option key={p.id} value={p.id}>{p.name} — ${(p.priceCents/100).toFixed(2)}</option>
           ))}
@@ -107,7 +114,7 @@ export default function BookPage() {
       <br/>
       <label>Time Slot<br/>
         <select value={slot} onChange={e=>setSlot(e.target.value)}>
-          <option value="">Select…</option>
+          <option value="">{slots.length ? 'Select…' : 'No slots available'}</option>
           {slots.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
       </label>
@@ -122,7 +129,7 @@ export default function BookPage() {
       <br/>
       {selected && <p><b>Total:</b> ${(selected.priceCents/100).toFixed(2)}</p>}
       {error && <p style={{color:'#b00'}}>{error}</p>}
-      <button onClick={submit} disabled={loading || !productId}>{loading ? 'Processing…' : 'Proceed to Payment'}</button>
+      <button onClick={submit} disabled={loading || !productId || !slot}>{loading ? 'Processing…' : 'Proceed to Payment'}</button>
       <p style={{marginTop:16, color:'#777'}}>You will be redirected to a secure Worldline (Paymark Click) payment page.</p>
     </section>
   );
