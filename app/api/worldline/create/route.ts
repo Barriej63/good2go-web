@@ -79,24 +79,21 @@ export async function POST(req: NextRequest) {
 
   const reference = `${referencePrefix}-${pendingRef.id.slice(-8)}`;
 
+  // FORM AUTH: include username & password in the body
   const form = new URLSearchParams();
+  form.set("username", username);
+  form.set("password", password);
   form.set("account_id", accountId);
   form.set("cmd", "_xclick");
   form.set("amount", (priceCents/100).toFixed(2));
   form.set("type", "purchase");
-  // removed currency per Worldline whitelist error 8001
   form.set("reference", reference);
   form.set("particular", JSON.stringify({ bookingId: pendingRef.id, productId: parsed.data.productId }));
   form.set("return_url", returnUrl);
 
   try {
-    const auth = Buffer.from(`${username}:${password}`).toString("base64");
     const res = await axios.post(endpoint, form.toString(), {
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/xml",
-        "Authorization": `Basic ${auth}`,
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml" },
       validateStatus: () => true,
       timeout: 120000,
     });
