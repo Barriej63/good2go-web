@@ -1,9 +1,10 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import axios from "axios";
 import { adminDb } from "@/src/firebaseAdmin";
 import { sendEmail } from "@/src/email";
-
-export const dynamic = "force-dynamic";
 
 function normalizeEnv(val?: string) {
   const s = (val || '').toLowerCase().trim();
@@ -11,7 +12,6 @@ function normalizeEnv(val?: string) {
   if (['uat', 'test', 'testing', 'sandbox', 'staging', 'dev', 'development'].includes(s)) return 'uat';
   return 'uat';
 }
-
 
 function getPaymarkAuth() {
   const username = process.env.WORLDLINE_USERNAME || process.env.PAYMARK_CLIENT_ID;
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   if (bookingId) {
     const ref = adminDb.collection("bookings").doc(bookingId);
     const snap = await ref.get();
-    const booking = snap.exists ? snap.data() as any : null;
+    const booking = snap.exists ? (snap.data() as any) : null;
 
     if (ok && booking) {
       await ref.update({ status: "paid", transactionId: TransactionId, reference: Reference });
