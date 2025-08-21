@@ -1,79 +1,95 @@
 // app/api/worldline/create/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-type Attempt = { url: string; status: number; ok: boolean; contentType?: string; raw: string };
-
-function envInfo() {
-  const mode = (process.env.WORLDLINE_ENV || "uat").toLowerCase();
-  const isProd = ["production","prod","live"].includes(mode);
+// --- Env helpers: production vs uat ---
+function getEndpointBase(): { envMode: string; base: string } {
+  const envMode = (process.env.WORLDLINE_ENV || "uat").toLowerCase();
+  const isProd = ["production", "prod", "live"].includes(envMode);
   return {
-    mode,
-    host: isProd ? "https://secure.paymarkclick.co.nz" : "https://secure.uat.paymarkclick.co.nz"
+    envMode: isProd ? "production" : "uat",
+    base: isProd
+      ? "https://secure.paymarkclick.co.nz/api/"
+      : "https://secure.uat.paymarkclick.co.nz/api/",
   };
 }
 
-function chooseUrlFromXml(xml: string): string | null {
-  const candidates = new Set<string>();
-  for (const m of xml.matchAll(/\bhttps?:\/\/[^\s<>"']+/gi)) candidates.add(m[0]);
-  const arr = Array.from(candidates).filter(u => !/schemas\.microsoft\.com|w3\.org/i.test(u));
-  const paymark = arr.filter(u => /paymarkclick\.co\.nz/i.test(u));
-  return (paymark.find(u => u.startsWith("https://")) || paymark[0] || arr[0]) ?? null;
+// --- XML helpers ---
+function extractUrls(xml: string): string[] {
+  const urls = new Set<string>();
+  // href="..."
+  for (const m of xml.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) urls.add(m[1]);
+  // absolute URLs in text
+  for (const m of xml.matchAll(/\bhttps?:\/\/[^\s<>"']+/gi)) urls.add(m[0]);
+  // known tags
+  for (const m of xml.matchAll(/<(HostedPaymentPage|RedirectUrl|HostedPaymentPageLink)[^>]*>([^<]+)<\/\1>/gi)) {
+    urls.add(m[2]);
+  }
+  // filter noise
+  return Array.from(urls).filter(u => /^https?:\/\//i.test(u) && !/schemas\.microsoft\.com|w3\.org\/TR\/xhtml1/i.test(u));
 }
 
-async function postForm(url: string, form: URLSearchParams): Promise<Attempt> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml, text/xml, */*" },
-    body: form.toString(),
-  }).catch((e) => ({
-    ok: false,
-    status: 0,
-    headers: new Headers(),
-    text: async () => String(e?.message || "fetch error"),
-  } as any));
-  const raw = await res.text();
-  const ct = res.headers.get("content-type") || undefined;
-  return { url, status: (res as any).status ?? 0, ok: (res as any).ok ?? false, contentType: ct, raw };
+function pickHppUrl(urls: string[]): string | null {
+  const candidates = urls.filter(u => /paymarkclick\.co\.nz/i.test(u));
+  const byHttps = (arr: string[]) => arr.sort((a,b) => (b.startsWith("https://")?1:0) - (a.startsWith("https://")?1:0));
+  const first = (arr: string[]) => arr.length ? byHttps(arr)[0] : null;
+  return first(candidates) ?? first(urls);
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { host, mode } = envInfo();
-    const body = await req.json().catch(() => ({}));
-    const { amountCents, bookingId, particular, returnUrl, cancelUrl, worldlineExtra = {} } = body || {};
+    const {
+      amountCents,
+      bookingId,
+      particular,
+      returnUrl,
+      cancelUrl,
+      worldlineExtra = {},
+    } = await req.json();
 
-    const USER = process.env.WORLDLINE_USERNAME || "";
-    const PASS = process.env.WORLDLINE_PASSWORD || "";
-    const ACCT = process.env.WORLDLINE_ACCOUNT_ID || "";
-
-    if (!USER || !PASS || !ACCT) {
-      return NextResponse.json({ error: "Missing Worldline env (WORLDLINE_USERNAME, WORLDLINE_PASSWORD, WORLDLINE_ACCOUNT_ID)" }, { status: 500 });
+    const USERNAME = process.env.WORLDLINE_USERNAME || "";
+    const PASSWORD = process.env.WORLDLINE_PASSWORD || "";
+    const ACCOUNT  = process.env.WORLDLINE_ACCOUNT_ID || "";
+    if (!USERNAME || !PASSWORD || !ACCOUNT) {
+      return NextResponse.json({ error: "Missing Worldline env vars." }, { status: 500 });
     }
-    if (!amountCents || !bookingId) return NextResponse.json({ error: "Missing amountCents or bookingId" }, { status: 400 });
+    if (!amountCents || !bookingId) {
+      return NextResponse.json({ error: "Missing amountCents or bookingId." }, { status: 400 });
+    }
+
+    const { envMode, base } = getEndpointBase();
 
     const form = new URLSearchParams({
-      username: USER, password: PASS, accountid: ACCT,
-      amount: (amountCents/100).toFixed(2), particular: particular || `BID:${bookingId}`,
+      username: USERNAME,
+      password: PASSWORD,
+      accountid: ACCOUNT,
+      amount: (amountCents / 100).toFixed(2),
+      particular: particular || `BID:${bookingId}`,
       ...(returnUrl ? { returnurl: returnUrl } : {}),
       ...(cancelUrl ? { cancelurl: cancelUrl } : {}),
-      ...Object.fromEntries(Object.entries(worldlineExtra).map(([k,v]) => [k, String(v)])),
+      ...Object.fromEntries(Object.entries(worldlineExtra).map(([k, v]) => [k, String(v)])),
     });
 
-    const endpoints = [`${host}/api/transactions`, `${host}/api/transaction`, `${host}/api/Transactions`];
-    const attempts: Attempt[] = [];
-    for (const url of endpoints) {
-      const attempt = await postForm(url, form);
-      attempts.push(attempt);
-      if (attempt.ok && /xml|text\/xml/i.test(attempt.contentType || "") && /https?:\/\/.*paymarkclick\.co\.nz/i.test(attempt.raw)) {
-        const redirectUrl = chooseUrlFromXml(attempt.raw);
-        if (redirectUrl) {
-          return NextResponse.json({ ok: true, redirectUrl, endpoint: url, env: mode });
-        }
-      }
+    const url = base + "transactions"; // **locked to plural; known good**
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml, text/xml, */*" },
+      body: form.toString(),
+    });
+
+    const raw = await res.text();
+    if (!res.ok) {
+      return NextResponse.json({ ok: false, status: res.status, raw: raw.slice(0, 4000), endpoint: url }, { status: 502 });
     }
-    // If here, none matched. Return best clue.
-    return NextResponse.json({ ok: false, error: "Could not create HPP", env: mode, endpointTried: endpoints, attempts }, { status: 502 });
-  } catch (e:any) {
-    return NextResponse.json({ error: e?.message || "Unexpected error" }, { status: 500 });
+
+    const urls = extractUrls(raw);
+    const redirectUrl = pickHppUrl(urls);
+
+    if (!redirectUrl) {
+      return NextResponse.json({ ok: false, error: "No Hosted Payment Page URL found", urls, raw: raw.slice(0, 4000), endpoint: url }, { status: 502 });
+    }
+
+    return NextResponse.json({ ok: true, status: res.status, redirectUrl, urls, env: envMode, endpoint: url });
+  } catch (err: any) {
+    return NextResponse.json({ ok: false, error: err?.message || "Unexpected error" }, { status: 500 });
   }
 }
