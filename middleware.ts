@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 /**
- * Belt-and-braces: if a POST (or any non-GET) hits /success, force a 303 to GET.
- * Works regardless of app/page router and catches edge cases.
+ * Safety net for /success: if any non-GET hits it, force a 303 redirect to the same URL.
+ * This ensures your success page (GET) renders even if a gateway POSTs here directly.
  */
 export function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
