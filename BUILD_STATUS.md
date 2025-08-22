@@ -1,29 +1,39 @@
-# Good2Go Build Status — Web Payments (WPRequest)
+# Good2Go — Worldline WPRequest pack (drop-in)
 
-## Env
-- WORLDLINE_ENV: uat | production | prod | live
-- WORLDLINE_USERNAME: <Client ID>
-- WORLDLINE_PASSWORD: <API Key>
-- WORLDLINE_ACCOUNT_ID: <Account ID>
-- PUBLIC_RETURN_URL: https://your-domain/success (fallback if not supplied by client)
-- PUBLIC_CANCEL_URL: https://your-domain/cancel (optional)
+## What this does
+- **Create**: Calls Click™ (Paymark) **WPRequest** to generate a Hosted Payment Page URL.
+- **Return**: Marks `bookings/<id>` as paid in Firestore and optionally sends a confirmation email (SendGrid).
 
-## HPP (Hosted Payment Page) creation
-- Endpoint: `https://secure[.uat].paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest`
-- Method: POST `application/x-www-form-urlencoded`
-- Required fields we send:
-  - `cmd=_xclick`
-  - `type=purchase`
-  - `amount=##.##`
-  - `reference`, `particular` (trimmed to 50 chars)
-  - `username`, `password`, `account_id`
-  - `return_url` (set `PUBLIC_RETURN_URL` if not supplied)
+## Env (set for ONE environment)
+- `WORLDLINE_ENV`: `production` | `prod` | `live` | `uat`
+- `WORLDLINE_USERNAME`: Client ID
+- `WORLDLINE_PASSWORD`: API Key
+- `WORLDLINE_ACCOUNT_ID`: Account ID
+- `PUBLIC_RETURN_URL`: `https://your-domain/success` (optional fallback)
+- `PUBLIC_CANCEL_URL`: `https://your-domain/cancel` (optional fallback)
+- (Optional email) `SENDGRID_API_KEY`, `SENDGRID_FROM` (e.g., `Good2Go <help@good2go-rth.com>`)
 
 ## Routes
-- `/api/worldline/test` → $1.00 probe; returns `{ ok, status, redirectUrl, endpoint, envMode, urls, raw }`
-- `/api/worldline/create` → real create; body: `{ amountCents, bookingId?, reference?, particular?, returnUrl?, cancelUrl?, customerEmail?, storePaymentToken? }`
+- `POST /api/worldline/create` → body includes `{ amountCents, bookingId, name, email, region, date, slot, returnUrl?, cancelUrl? }`
+  - returns `{ ok, redirectUrl }`
+- `GET /api/worldline/return?q=<token>&bid=<bookingId>` → updates Firestore and redirects to `/success?bid=<id>`
+  - also supports `POST` with `{ bookingId, q, email?, name? }`
 
-## Next
-1) Set env for **one** environment (uat or production) and deploy.
-2) Visit `/api/worldline/test` and click `redirectUrl` → expect HPP.
-3) Run `/book` → Proceed to Payment → HPP.
+## Firestore write
+```
+bookings/<bookingId> = {
+  ...existing,
+  paid: true,
+  status: "paid",
+  paidAt: <ISO>,
+  worldline: { q, env, returnedAt: <ISO> }
+}
+```
+
+## Notes
+- `reference` & `particular` are both set to `BID:<bookingId>` and trimmed to 50 chars.
+- If you don't pass `returnUrl`, the route uses `PUBLIC_RETURN_URL` (same for `cancelUrl`).
+
+## Smoke test
+1) `POST /api/worldline/create` with a small `amountCents` and your bookingId → copy `redirectUrl` and open it (HPP).
+2) Complete payment → you’ll be redirected back to `/success?bid=<id>` and the Firestore doc will show `paid:true`.
