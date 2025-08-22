@@ -3,13 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
 
 /**
- * Flexible Worldline return handler.
- * Accepts:
- *  - POST with JSON (application/json)
- *  - POST with form (application/x-www-form-urlencoded)
- *  - GET with query string
- * Falls back to reading bookingId from the URL (?bid= or ?bookingId=) if not in the body.
- * Always redirects to /success?bid=... after persisting "paid".
+ * Return handler: marks booking paid, then redirects to /success?bid=... with HTTP 303 (See Other)
+ * so the browser performs a GET to /success (avoids 405s if the gateway used POST).
+ * Accepts JSON, form-encoded, and query-string inputs.
  */
 
 type Parsed = { bookingId?: string; q?: string; email?: string; name?: string };
@@ -20,7 +16,7 @@ async function parseBody(req: NextRequest): Promise<Parsed> {
     if (ct.includes("application/json")) {
       const body = await req.json().catch(() => ({} as any));
       return {
-        bookingId: String(body.bookingId || body.bid || "" || ""),
+        bookingId: String(body.bookingId || body.bid || ""),
         q: body.q ? String(body.q) : (body.token ? String(body.token) : undefined),
         email: body.email ? String(body.email) : undefined,
         name: body.name ? String(body.name) : undefined,
@@ -70,6 +66,7 @@ async function markPaid(bookingId: string, q: string | undefined, email?: string
     },
   }, { merge: true });
 
+  // Optional SendGrid (kept unchanged)
   const toEmail = email || existing?.email;
   const toName = name || existing?.name;
   if (toEmail && process.env.SENDGRID_API_KEY && process.env.SENDGRID_FROM) {
@@ -92,7 +89,8 @@ function successRedirect(req: NextRequest, bookingId: string) {
   const url = new URL(req.url);
   const dest = new URL("/success", url.origin);
   dest.searchParams.set("bid", bookingId);
-  return NextResponse.redirect(dest);
+  // Use 303 to force a GET on the destination
+  return NextResponse.redirect(dest, 303);
 }
 
 export async function GET(req: NextRequest) {
@@ -117,7 +115,7 @@ export async function POST(req: NextRequest) {
   const name = b.name || q.name;
 
   if (!bookingId) {
-    // As a last resort, return 200 so gateways don't retry, and instruct front-end to poll
+    // Return 200 to avoid gateway retries; UI can poll if needed
     return NextResponse.json({ ok: false, error: "Missing bookingId" }, { status: 200 });
   }
 
