@@ -1,85 +1,118 @@
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
+// app/api/worldline/return/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import axios from "axios";
-import { adminDb } from "@/src/firebaseAdmin";
-import { sendEmail } from "@/src/email";
+// Import your Firebase Admin helper (JS is fine to import in TS)
+import { getAdminDb } from "@/lib/firebaseAdmin";
 
-function normalizeEnv(val?: string) {
-  const s = (val || '').toLowerCase().trim();
-  if (['prod', 'production', 'live'].includes(s)) return 'prod';
-  if (['uat', 'test', 'testing', 'sandbox', 'staging', 'dev', 'development'].includes(s)) return 'uat';
-  return 'uat';
+// (Optional) SendGrid confirmation
+async function maybeSendEmail(toEmail: string, toName: string | undefined, bookingId: string) {
+  try {
+    const apiKey = process.env.SENDGRID_API_KEY;
+    const from = process.env.SENDGRID_FROM;
+    if (!apiKey || !from) return;
+    const sgMail = await import("@sendgrid/mail");
+    sgMail.setApiKey(apiKey);
+    await sgMail.send({
+      to: toName ? { email: toEmail, name: toName } : toEmail,
+      from,
+      subject: "Good2Go Booking Confirmation",
+      text: `Thanks! Your booking (${bookingId}) is confirmed.`,
+      html: `<p>Thanks! Your booking <strong>${bookingId}</strong> is confirmed.</p>`,
+    });
+  } catch (_e) {
+    // swallow email errors to avoid interrupting success
+  }
 }
 
-function getPaymarkAuth() {
-  const username = process.env.WORLDLINE_USERNAME || process.env.PAYMARK_CLIENT_ID;
-  const password = process.env.WORLDLINE_PASSWORD || process.env.PAYMARK_API_KEY;
-  const rawEnv = process.env.WORLDLINE_ENV || process.env.PAYMARK_ENV || "uat";
-  const env = normalizeEnv(rawEnv);
-  return { username, password, env };
-}
+/**
+ * Handles the Hosted Payment Page return.
+ * Supports both GET (from redirect) and POST (if you choose to post data back).
+ *
+ * We expect either:
+ *  - GET /api/worldline/return?q=<token>&bid=<bookingId>
+ *  - or GET /success?q=<token>&bid=<bookingId> (if you mapped PUBLIC_RETURN_URL there)
+ *  - or POST with JSON { bookingId, q }
+ */
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const q = url.searchParams.get("q") || url.searchParams.get("token") || "";
+  const bookingId = url.searchParams.get("bid") || url.searchParams.get("bookingId") || url.searchParams.get("id") || "";
 
-async function verifyTransaction(transactionId: string) {
-  const { username, password, env } = getPaymarkAuth();
-  const base = env === "prod"
-    ? "https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest"
-    : "https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest";
-  const url = `${base}/?cmd=_xclick&transaction_id=${encodeURIComponent(transactionId)}`;
-  const auth = Buffer.from(`${username}:${password}`).toString("base64");
-  const res = await axios.get(url, { headers: { "Authorization": `Basic ${auth}` } });
-  const text: string = typeof res.data === "string" ? res.data : String(res.data);
-  return text;
+  if (!bookingId) {
+    // If bookingId isn't in the URL, fail gracefully and instruct client to call POST with JSON body
+    return NextResponse.json({ ok:false, error: "Missing bookingId (use ?bid= or POST JSON body)" }, { status: 400 });
+  }
+
+  try {
+    const db = getAdminDb();
+    const ref = db.collection("bookings").doc(bookingId);
+    const now = new Date().toISOString();
+
+    // Try to pull current record for email/name
+    const snap = await ref.get();
+    const existing = snap.exists ? snap.data() as any : {};
+
+    await ref.set({
+      ...existing,
+      paid: true,
+      status: "paid",
+      paidAt: now,
+      worldline: {
+        ...(existing?.worldline || {}),
+        q,
+        env: (process.env.WORLDLINE_ENV || "uat"),
+        returnedAt: now,
+      },
+    }, { merge: true });
+
+    // Optional email
+    const email = existing?.email || url.searchParams.get("email") || "";
+    const name = existing?.name || url.searchParams.get("name") || "";
+
+    if (email) {
+      await maybeSendEmail(String(email), name ? String(name) : undefined, bookingId);
+    }
+
+    return NextResponse.redirect(new URL(`/success?bid=${encodeURIComponent(bookingId)}`, url.origin));
+  } catch (err: any) {
+    return NextResponse.json({ ok:false, error: err?.message || "Failed to update booking" }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const form = await req.formData();
-  const TransactionId = String(form.get("TransactionId") || "");
-  const Reference = String(form.get("Reference") || "");
-  const Particular = String(form.get("Particular") || "");
-
-  if (!TransactionId) return NextResponse.json({ error: "Missing TransactionId" }, { status: 400 });
-
-  const verification = await verifyTransaction(TransactionId);
-  const ok = /<status>1<\/status>|Status>1/i.test(verification) || /SUCCESS/i.test(verification);
-
-  // Accept both JSON and "BID:<id>"
-  let bookingId: string | null = null;
-  if (Particular.startsWith("BID:")) {
-    bookingId = Particular.slice(4);
-  } else {
-    try {
-      const p = JSON.parse(Particular);
-      bookingId = p.bookingId || p.id || null;
-    } catch {}
-  }
-
-  if (!bookingId) return NextResponse.redirect(new URL("/cancel", req.url));
-
-  const ref = adminDb.collection("bookings").doc(bookingId);
-  const snap = await ref.get();
-  const booking = snap.exists ? (snap.data() as any) : null;
-
-  if (ok && booking) {
-    await ref.update({ status: "paid", transactionId: TransactionId, reference: Reference });
-    if (booking.email) {
-      const amount = (Number(booking.amount || 0) / 100).toFixed(2);
-      const productName = booking.product?.name || "Good2Go Booking";
-      await sendEmail(
-        booking.email,
-        "Good2Go booking confirmed",
-        `<p>Thanks ${booking.name ? booking.name : ""}! Your payment has been received.</p>
-         <p><b>Product:</b> ${productName}<br/>
-            <b>Amount:</b> $${amount}<br/>
-            <b>Transaction:</b> ${TransactionId}<br/>
-            <b>Reference:</b> ${Reference}</p>
-         <p>See you soon.<br/>— Good2Go</p>`
-      );
+  try {
+    const body = await req.json().catch(() => ({}));
+    const { bookingId, q, email, name } = body || {};
+    if (!bookingId) {
+      return NextResponse.json({ ok:false, error: "Missing bookingId in body" }, { status: 400 });
     }
-    return NextResponse.redirect(new URL("/success", req.url));
-  } else {
-    await ref.update({ status: "cancelled" });
-    return NextResponse.redirect(new URL("/cancel", req.url));
+
+    const db = getAdminDb();
+    const ref = db.collection("bookings").doc(String(bookingId));
+    const now = new Date().toISOString();
+    const snap = await ref.get();
+    const existing = snap.exists ? snap.data() as any : {};
+
+    await ref.set({
+      ...existing,
+      paid: true,
+      status: "paid",
+      paidAt: now,
+      worldline: {
+        ...(existing?.worldline || {}),
+        q: q ? String(q) : (existing?.worldline?.q || ""),
+        env: (process.env.WORLDLINE_ENV || "uat"),
+        returnedAt: now,
+      },
+    }, { merge: true });
+
+    const finalEmail = (email || existing?.email) ? String(email || existing?.email) : "";
+    const finalName = (name || existing?.name) ? String(name || existing?.name) : undefined;
+    if (finalEmail) {
+      await maybeSendEmail(finalEmail, finalName, String(bookingId));
+    }
+
+    return NextResponse.json({ ok:true, bookingId: String(bookingId) });
+  } catch (err: any) {
+    return NextResponse.json({ ok:false, error: err?.message || "Failed to update booking" }, { status: 500 });
   }
 }
