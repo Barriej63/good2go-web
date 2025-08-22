@@ -3,118 +3,49 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
 
 /**
- * Worldline Click™ (Paymark) — WPRequest Create (enhanced)
- * Accepts either:
- *   A) { amountCents, bookingId, ... }  (original contract)
- *   B) { productId, region, date, slot, name, email }  (auto: look up amount, create bookingId)
- *
- * If bookingId is not provided, we will create a Firestore document in bookings/* with status "pending"
- * and use its auto-ID as bookingId. We also store the submitted fields in that doc.
- *
- * Env (set for ONE environment only):
- *  - WORLDLINE_ENV: production | prod | live | uat
- *  - WORLDLINE_USERNAME: <Client ID>
- *  - WORLDLINE_PASSWORD: <API Key>
- *  - WORLDLINE_ACCOUNT_ID: <Account ID>
- *  - PUBLIC_RETURN_URL / PUBLIC_CANCEL_URL (optional fallbacks)
+ * Worldline Click™ WPRequest – create (whitelist-safe)
+ * - NO `cancel_url` (fixes PARAMETER 8001 whitelisting error)
+ * - Only sends fields commonly enabled on merchants.
+ * - Auto-creates booking if bookingId missing.
+ * - If amountCents missing, loads products/<productId>.priceCents.
+ * - Ensures return_url carries ?bid=<bookingId> (or replaces {bookingId} token).
  */
 
-function envHost(): { host: string; envMode: "production"|"uat" } {
+function envHost(): { host: string; envMode: "production" | "uat" } {
   const mode = (process.env.WORLDLINE_ENV || "uat").toLowerCase();
   const isProd = ["production","prod","live"].includes(mode);
   return { host: isProd ? "https://secure.paymarkclick.co.nz" : "https://secure.uat.paymarkclick.co.nz", envMode: isProd ? "production" : "uat" };
 }
 
-function extractUrlsFromXml(xml: string): string[] {
-  const urls = new Set<string>();
-  for (const m of xml.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) urls.add(m[1]);
-  for (const m of xml.matchAll(/\bhttps?:\/\/[^\s<>"']+/gi)) urls.add(m[0]);
-  for (const m of xml.matchAll(/<(HostedPaymentPage|RedirectUrl|HostedPaymentPageLink|string)[^>]*>([^<]+)<\/\1>/gi)) {
-    urls.add(m[2]);
+function trim50(s: string) { return s.length <= 50 ? s : s.slice(0, 50); }
+
+function ensureReturnUrl(baseUrl: string | undefined, bookingId: string, origin: string): string {
+  const fallback = process.env.PUBLIC_RETURN_URL || `${origin}/success`;
+  const raw = baseUrl || fallback;
+  if (raw.includes("{bookingId}")) return raw.replace("{bookingId}", encodeURIComponent(bookingId));
+  try {
+    const u = new URL(raw);
+    if (!u.searchParams.get("bid")) u.searchParams.set("bid", bookingId);
+    return u.toString();
+  } catch {
+    // if raw isn't a full URL, treat as path
+    const u = new URL(raw.startsWith("/") ? raw : `/${raw}`, origin);
+    u.searchParams.set("bid", bookingId);
+    return u.toString();
   }
-  return Array.from(urls);
-}
-
-function pickHppUrl(urls: string[]): string | null {
-  const httpish = urls.filter(u => /^https?:\/\//i.test(u));
-  const dropNoise = httpish.filter(u => !/schemas\.microsoft\.com|w3\.org\/TR\/xhtml|w3\.org\/1999\/xhtml/i.test(u));
-  const paymark = dropNoise.filter(u => /\bpaymarkclick\.co\.nz\b/i.test(u));
-  const byHttps = (arr: string[]) => arr.sort((a,b)=> (b.startsWith("https://")?1:0) - (a.startsWith("https://")?1:0));
-  const first = (arr: string[]) => arr.length ? byHttps(arr)[0] : null;
-  return first(paymark) ?? first(dropNoise) ?? first(httpish);
-}
-
-function trim50(s: string) {
-  return s.length <= 50 ? s : s.slice(0, 50);
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    let {
+    const {
+      productId,
       amountCents,
       bookingId,
-      // booking fields (if we need to create the booking server-side)
-      productId,
-      region,
-      date,
-      slot,
-      name,
-      email,
-      // optional overrides
+      region, date, slot, name, email,
       returnUrl,
-      cancelUrl,
-      // advanced
-      storePaymentToken,
-      buttonLabel,
-    } = (body || {}) as any;
+    } = body || {};
 
-    // 1) If amount not provided, allow productId lookup
-    if ((!amountCents || isNaN(Number(amountCents))) && productId) {
-      const db = getAdminDb();
-      const prodRef = db.collection("products").doc(String(productId));
-      const prodSnap = await prodRef.get();
-      if (!prodSnap.exists) {
-        return NextResponse.json({ ok:false, error: `Unknown productId: ${productId}` }, { status: 400 });
-      }
-      const prod = prodSnap.data() as any;
-      if (prod.active === false) {
-        return NextResponse.json({ ok:false, error: `Product ${productId} is not active` }, { status: 400 });
-      }
-      const price = Number(prod.priceCents ?? prod.pricecents ?? prod.price ?? 0);
-      if (!price || isNaN(price)) {
-        return NextResponse.json({ ok:false, error: `Product ${productId} missing priceCents` }, { status: 400 });
-      }
-      amountCents = price;
-    }
-
-    // 2) If no bookingId, create one and persist "pending" booking
-    if (!bookingId) {
-      const db = getAdminDb();
-      const bookings = db.collection("bookings");
-      const newDoc = bookings.doc(); // auto-id
-      bookingId = newDoc.id;
-      const now = new Date().toISOString();
-      const bookingData = {
-        productId: productId || null,
-        region: region || null,
-        date: date || null,
-        slot: slot || null,
-        name: name || null,
-        email: email || null,
-        amountCents: Number(amountCents) || null,
-        status: "pending",
-        createdAt: now,
-      };
-      await newDoc.set(bookingData, { merge: true });
-    }
-
-    // Validate we now have both
-    if (!amountCents || !bookingId) {
-      return NextResponse.json({ ok:false, error: "Missing amountCents or bookingId" }, { status: 400 });
-    }
-
-    // 3) Credentials and endpoint
     const creds = {
       username: process.env.WORLDLINE_USERNAME || "",
       password: process.env.WORLDLINE_PASSWORD || "",
@@ -123,54 +54,89 @@ export async function POST(req: NextRequest) {
     if (!creds.username || !creds.password || !creds.account_id) {
       return NextResponse.json({ ok:false, error: "Missing Worldline env. Set WORLDLINE_USERNAME, WORLDLINE_PASSWORD, WORLDLINE_ACCOUNT_ID." }, { status: 500 });
     }
+
+    const db = getAdminDb();
+
+    // Resolve amount
+    let cents: number | null = null;
+    if (typeof amountCents === "number") cents = amountCents;
+    else if (productId) {
+      const prod = await db.collection("products").doc(String(productId)).get();
+      const data = prod.exists ? (prod.data() as any) : null;
+      if (!data || !data.active || typeof data.priceCents !== "number") {
+        return NextResponse.json({ ok:false, error: "Product not found/active or missing priceCents", productId }, { status: 400 });
+      }
+      cents = data.priceCents;
+    } else {
+      return NextResponse.json({ ok:false, error: "Missing amountCents or productId" }, { status: 400 });
+    }
+
+    // Ensure booking
+    let bid = typeof bookingId === "string" && bookingId ? bookingId : undefined;
+    if (!bid) {
+      const ref = await db.collection("bookings").add({
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        productId: productId || null,
+        amountCents: cents,
+        region: region || null,
+        date: date || null,
+        slot: slot || null,
+        name: name || null,
+        email: email || null,
+      });
+      bid = ref.id;
+    } else {
+      // if existing, upsert pending state / latest details
+      await db.collection("bookings").doc(bid).set({
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+        productId: productId || null,
+        amountCents: cents,
+        region: region || null,
+        date: date || null,
+        slot: slot || null,
+        name: name || null,
+        email: email || null,
+      }, { merge: true });
+    }
+
     const { host, envMode } = envHost();
     const endpoint = `${host}/api/webpayments/paymentservice/rest/WPRequest`;
 
-    // 4) Build WPRequest form
+    // Build a whitelist-safe form: common, widely-enabled fields only
     const form = new URLSearchParams({
       username: creds.username,
       password: creds.password,
       account_id: creds.account_id,
       cmd: "_xclick",
       type: "purchase",
-      amount: (Number(amountCents) / 100).toFixed(2),
-      reference: trim50(`BID:${bookingId}`),
-      particular: trim50(`BID:${bookingId}`),
-      return_url: returnUrl || process.env.PUBLIC_RETURN_URL || "",
-      cancel_url: cancelUrl || process.env.PUBLIC_CANCEL_URL || "",
+      amount: ((cents as number) / 100).toFixed(2),
+      reference: trim50(`BID:${bid}`),
+      particular: trim50(`BID:${bid}`),
+      return_url: ensureReturnUrl(returnUrl, bid as string, new URL(req.url).origin),
     });
-    if (email) form.set("email", String(email));
-    if (buttonLabel) form.set("button_label", String(buttonLabel));
-    if (storePaymentToken !== undefined && storePaymentToken !== null) {
-      form.set("store_payment_token", String(storePaymentToken));
-    }
-    if (region) form.set("custom_region", String(region));
-    if (date) form.set("custom_date", String(date));
-    if (slot) form.set("custom_slot", String(slot));
-    if (name) form.set("custom_name", String(name));
-    if (bookingId) form.set("custom_booking_id", String(bookingId));
+    if (email) form.set("email", String(email)); // allowed for receipts
 
-    // 5) Call gateway
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "application/xml, text/xml, */*",
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/xml, text/xml, */*" },
       body: form.toString(),
     });
+
     const raw = await res.text();
     if (!res.ok) {
       return NextResponse.json({ ok:false, status: res.status, endpoint, raw: raw.slice(0, 4000) }, { status: 502 });
     }
 
-    const urls = extractUrlsFromXml(raw);
-    const redirectUrl = pickHppUrl(urls);
+    // Extract redirect URL
+    const urls = Array.from(raw.matchAll(/\bhttps?:\/\/[^\s<>"']+/gi)).map(m => m[0]);
+    const redirectUrl = urls.find(u => /paymarkclick\.co\.nz\/webpayments\/default\.aspx\?q=/i.test(u)) || null;
     if (!redirectUrl) {
-      return NextResponse.json({ ok:false, status: res.status, endpoint, urls, raw: raw.slice(0, 4000) }, { status: 502 });
+      return NextResponse.json({ ok:false, status: res.status, endpoint, raw: raw.slice(0, 4000) }, { status: 502 });
     }
 
-    return NextResponse.json({ ok:true, status: res.status, envMode, endpoint, bookingId, redirectUrl });
+    return NextResponse.json({ ok:true, bookingId: bid, redirectUrl, endpoint, envMode });
   } catch (err: any) {
     return NextResponse.json({ ok:false, error: err?.message || "Unexpected error" }, { status: 500 });
   }
