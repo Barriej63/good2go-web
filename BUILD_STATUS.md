@@ -1,39 +1,20 @@
-# Good2Go — Worldline WPRequest pack (drop-in)
+# Good2Go — WPRequest fix + Success page
 
-## What this does
-- **Create**: Calls Click™ (Paymark) **WPRequest** to generate a Hosted Payment Page URL.
-- **Return**: Marks `bookings/<id>` as paid in Firestore and optionally sends a confirmation email (SendGrid).
+**Create route**
+- Removes `cancel_url` (fixes PARAMETER 8001 “whitelisting” error).
+- Accepts `{ productId }` if `amountCents` not supplied and loads `products/<productId>.priceCents`.
+- Auto-creates pending `bookings/<id>` if `bookingId` missing.
+- Ensures `return_url` includes `?bid=<bookingId>` (or replaces `{bookingId}` token).
+- Sends only commonly whitelisted fields to WPRequest.
 
-## Env (set for ONE environment)
-- `WORLDLINE_ENV`: `production` | `prod` | `live` | `uat`
-- `WORLDLINE_USERNAME`: Client ID
-- `WORLDLINE_PASSWORD`: API Key
-- `WORLDLINE_ACCOUNT_ID`: Account ID
-- `PUBLIC_RETURN_URL`: `https://your-domain/success` (optional fallback)
-- `PUBLIC_CANCEL_URL`: `https://your-domain/cancel` (optional fallback)
-- (Optional email) `SENDGRID_API_KEY`, `SENDGRID_FROM` (e.g., `Good2Go <help@good2go-rth.com>`)
+**Success page**
+- New `/success` route shows `bid` from the query string.
 
-## Routes
-- `POST /api/worldline/create` → body includes `{ amountCents, bookingId, name, email, region, date, slot, returnUrl?, cancelUrl? }`
-  - returns `{ ok, redirectUrl }`
-- `GET /api/worldline/return?q=<token>&bid=<bookingId>` → updates Firestore and redirects to `/success?bid=<id>`
-  - also supports `POST` with `{ bookingId, q, email?, name? }`
+**Env**
+- `WORLDLINE_ENV` = `production|prod|live` or `uat`
+- `WORLDLINE_USERNAME`, `WORLDLINE_PASSWORD`, `WORLDLINE_ACCOUNT_ID`
+- Optional: `PUBLIC_RETURN_URL` (default fallback to `/success`)
 
-## Firestore write
-```
-bookings/<bookingId> = {
-  ...existing,
-  paid: true,
-  status: "paid",
-  paidAt: <ISO>,
-  worldline: { q, env, returnedAt: <ISO> }
-}
-```
-
-## Notes
-- `reference` & `particular` are both set to `BID:<bookingId>` and trimmed to 50 chars.
-- If you don't pass `returnUrl`, the route uses `PUBLIC_RETURN_URL` (same for `cancelUrl`).
-
-## Smoke test
-1) `POST /api/worldline/create` with a small `amountCents` and your bookingId → copy `redirectUrl` and open it (HPP).
-2) Complete payment → you’ll be redirected back to `/success?bid=<id>` and the Firestore doc will show `paid:true`.
+**Test**
+1) From UI, proceed to payment.
+2) Complete HPP. You should be redirected to `/success?bid=<id>` and the Firestore booking should flip to `paid:true` via `/api/worldline/return`.
