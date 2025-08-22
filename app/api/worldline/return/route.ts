@@ -3,9 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
 
 /**
- * Return handler: marks booking paid, then redirects to /success?bid=... with HTTP 303 (See Other)
- * so the browser performs a GET to /success (avoids 405s if the gateway used POST).
- * Accepts JSON, form-encoded, and query-string inputs.
+ * Marks booking as paid, then redirects to /success?bid=... with HTTP 303 (forces GET).
+ * Accepts JSON, form-encoded, and query-string.
  */
 
 type Parsed = { bookingId?: string; q?: string; email?: string; name?: string };
@@ -66,7 +65,6 @@ async function markPaid(bookingId: string, q: string | undefined, email?: string
     },
   }, { merge: true });
 
-  // Optional SendGrid (kept unchanged)
   const toEmail = email || existing?.email;
   const toName = name || existing?.name;
   if (toEmail && process.env.SENDGRID_API_KEY && process.env.SENDGRID_FROM) {
@@ -89,8 +87,7 @@ function successRedirect(req: NextRequest, bookingId: string) {
   const url = new URL(req.url);
   const dest = new URL("/success", url.origin);
   dest.searchParams.set("bid", bookingId);
-  // Use 303 to force a GET on the destination
-  return NextResponse.redirect(dest, 303);
+  return NextResponse.redirect(dest, 303); // force GET
 }
 
 export async function GET(req: NextRequest) {
@@ -115,7 +112,7 @@ export async function POST(req: NextRequest) {
   const name = b.name || q.name;
 
   if (!bookingId) {
-    // Return 200 to avoid gateway retries; UI can poll if needed
+    // 200 to avoid retries; UI can poll
     return NextResponse.json({ ok: false, error: "Missing bookingId" }, { status: 200 });
   }
 
