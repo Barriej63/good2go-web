@@ -2,12 +2,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * Matrix tester: probes both hosts (prod + uat) across a broad set of Click (Paymark) endpoints.
- * Returns the first real HPP URL found, or a detailed attempts log.
- * Guarding is optional here; you can add your own header checks if needed.
+ * Simple verifier for Web Payments HPP (WPRequest).
+ * Posts a $1.00 test and returns the HPP URL if reachable.
  */
 
-type Attempt = { host: "production" | "uat"; path: string; url: string; status: number; ok: boolean; contentType?: string; redirectUrl: string | null; rawPreview: string };
+function envHost(): { base: string; mode: string } {
+  const mode = (process.env.WORLDLINE_ENV || "uat").toLowerCase();
+  const isProd = ["production","prod","live"].includes(mode);
+  return { base: isProd ? "https://secure.paymarkclick.co.nz" : "https://secure.uat.paymarkclick.co.nz", mode: isProd ? "production" : "uat" };
+}
 
 function extractUrlsFromXml(xml: string): string[] {
   const urls = new Set<string>();
@@ -20,15 +23,11 @@ function extractUrlsFromXml(xml: string): string[] {
 }
 function pickHppUrl(urls: string[]): string | null {
   const httpish = urls.filter(u => /^https?:\/\//i.test(u));
-  const noSchemas = httpish.filter(u => !/schemas\.microsoft\.com|w3\.org\/TR\/xhtml|w3\.org\/1999\/xhtml/i.test(u));
-  const paymark = noSchemas.filter(u => /\bpaymarkclick\.co\.nz\b/i.test(u));
+  const noNoise = httpish.filter(u => !/schemas\.microsoft\.com|w3\.org\/TR\/xhtml|w3\.org\/1999\/xhtml/i.test(u));
+  const paymark = noNoise.filter(u => /\bpaymarkclick\.co\.nz\b/i.test(u));
   const byHttps = (arr: string[]) => arr.sort((a,b)=> (b.startsWith("https://")?1:0) - (a.startsWith("https://")?1:0));
   const first = (arr: string[]) => arr.length ? byHttps(arr)[0] : null;
-  return first(paymark) ?? first(noSchemas) ?? first(httpish);
-}
-function isHtmlError(body: string, contentType?: string): boolean {
-  if (contentType && /text\/html/i.test(contentType)) return true;
-  return /<!DOCTYPE html|<html/i.test(body);
+  return first(paymark) ?? first(noNoise) ?? first(httpish);
 }
 
 export async function GET(_req: NextRequest) {
@@ -36,89 +35,52 @@ export async function GET(_req: NextRequest) {
     const creds = {
       username: process.env.WORLDLINE_USERNAME || "",
       password: process.env.WORLDLINE_PASSWORD || "",
-      accountid: process.env.WORLDLINE_ACCOUNT_ID || "",
+      account_id: process.env.WORLDLINE_ACCOUNT_ID || "",
     };
-    if (!creds.username || !creds.password || !creds.accountid) {
-      return NextResponse.json({ ok:false, message: "Missing Worldline env. Set WORLDLINE_USERNAME, WORLDLINE_PASSWORD, WORLDLINE_ACCOUNT_ID." }, { status: 500 });
+    if (!creds.username || !creds.password || !creds.account_id) {
+      return NextResponse.json({ ok:false, error: "Missing WORLDLINE_USERNAME/PASSWORD/ACCOUNT_ID" }, { status: 500 });
     }
 
-    const hosts: { name: "production" | "uat"; base: string }[] = [
-      { name: "production", base: "https://secure.paymarkclick.co.nz" },
-      { name: "uat", base: "https://secure.uat.paymarkclick.co.nz" },
-    ];
-    const paths = [
-      "/api/webpayments",
-      "/api/WebPayments",
-      "/webpayments",
-      "/webpayments/",
-      "/api/transactions",
-      "/api/transactions/",
-      "/api/transaction",
-      "/api/Transaction",
-      "/api/Transactions",
-      "/transactions",
-      "/transactions/",
-    ];
+    const { base, mode } = envHost();
+    const endpoint = `${base}/api/webpayments/paymentservice/rest/WPRequest`;
 
     const form = new URLSearchParams({
       username: creds.username,
       password: creds.password,
-      accountid: creds.accountid,
+      account_id: creds.account_id,
+      cmd: "_xclick",
+      type: "purchase",
       amount: "1.00",
-      particular: "TEST:diagnostic",
+      reference: "TEST:diagnostic",
+      particular: "TEST",
+      store_payment_token: "0",
+      button_label: "PAY NOW",
+      return_url: process.env.PUBLIC_RETURN_URL || "https://example.com/return",
     });
 
-    const attempts: Attempt[] = [];
-    let foundUrl: string | null = null;
-    let endpoint: string | null = null;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/xml, text/xml, */*",
+      },
+      body: form.toString(),
+    }).catch((e) => ({ ok:false, status:0, text: async ()=> String(e.message || "fetch failed"), headers: new Headers() } as any));
 
-    for (const host of hosts) {
-      for (const path of paths) {
-        const url = `${host.base}${path}`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/xml, text/xml, */*",
-          },
-          body: form.toString(),
-        }).catch((e) => ({ ok:false, status:0, text: async ()=> String(e.message || "fetch failed"), headers: new Headers() } as any));
+    const raw = await res.text();
+    const urls = extractUrlsFromXml(raw);
+    const redirectUrl = pickHppUrl(urls);
 
-        const raw = await res.text();
-        const contentType = res.headers?.get?.("content-type") || undefined;
-        let redirectUrl: string | null = null;
-
-        if ((res as any).ok && !isHtmlError(raw, contentType)) {
-          const urls = extractUrlsFromXml(raw);
-          redirectUrl = pickHppUrl(urls);
-          if (redirectUrl) {
-            foundUrl = redirectUrl;
-            endpoint = url;
-          }
-        }
-
-        attempts.push({
-          host: host.name,
-          path,
-          url,
-          status: (res as any).status ?? 0,
-          ok: !!(res as any).ok,
-          contentType,
-          redirectUrl,
-          rawPreview: raw.slice(0, 600),
-        });
-
-        if (foundUrl) break;
-      }
-      if (foundUrl) break;
-    }
-
-    if (!foundUrl) {
-      return NextResponse.json({ ok:false, message:"No working Click webpayments or transactions endpoint found.", attempts }, { status: 502 });
-    }
-
-    return NextResponse.json({ ok:true, endpoint, redirectUrl: foundUrl, attempts });
+    return NextResponse.json({
+      ok: !!redirectUrl && (res as any).ok,
+      status: (res as any).status ?? 0,
+      endpoint,
+      envMode: mode,
+      redirectUrl: redirectUrl || null,
+      urls,
+      raw: raw.slice(0, 1200),
+    }, { status: (res as any).ok ? 200 : 502 });
   } catch (err: any) {
-    return NextResponse.json({ ok:false, message: err?.message || "Unexpected error" }, { status: 500 });
+    return NextResponse.json({ ok:false, error: err?.message || "Unexpected error" }, { status: 500 });
   }
 }
