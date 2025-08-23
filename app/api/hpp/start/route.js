@@ -1,94 +1,86 @@
 import { NextResponse } from 'next/server';
-
-/**
- * HPP redirector with absolute-URL safety and optional init call.
- *
- * Env options:
- * - WORLDLINE_INIT_ENDPOINT: If set, we'll POST to this URL to create a session and expect a JSON body
- *   that contains a redirect link in one of: redirectUrl | paymentUrl | url | hppUrl | webPaymentUrl
- * - WORLDLINE_INIT_METHOD: Defaults to POST
- * - WORLDLINE_INIT_HEADERS: Optional JSON of headers to send (e.g. '{"Content-Type":"application/json","Authorization":"Bearer XXX"}')
- * - WORLDLINE_INIT_BODY_TEMPLATE: Optional JSON template string; supports {ref} token replacement. Example:
- *     '{"reference":"{ref}","amount":19900,"currency":"NZD"}'
- * - WORLDLINE_HPP_URL: If provided and absolute (http/https), we will append ?ref=... and redirect there.
- *   If it's a relative path (starts with '/'), we will convert it to an absolute URL using the current request origin.
- *
- * Fallback: if nothing else is configured, we 302 to the absolute /success?ref=... page so the flow continues.
- */
+import { getAdminDb } from '@/lib/firebaseAdmin';
 
 export const dynamic = 'force-dynamic';
 
-function absolutify(urlOrPath, reqUrl) {
-  try {
-    // Absolute already?
-    const u = new URL(urlOrPath);
-    return u.toString();
-  } catch (_e) {
-    // Relative -> resolve against the current origin
-    const origin = new URL(reqUrl).origin;
-    return new URL(urlOrPath, origin).toString();
-  }
+function basicAuth(user, pass) {
+  const token = Buffer.from(`${user}:${pass}`, 'utf8').toString('base64');
+  return `Basic ${token}`;
+}
+
+function toAbsolute(urlOrPath, origin) {
+  try { return new URL(urlOrPath, origin).toString(); }
+  catch { return new URL('/success', origin).toString(); }
 }
 
 export async function GET(req) {
-  const { searchParams } = new URL(req.url);
-  const ref = searchParams.get('ref');
-  if (!ref) {
-    return NextResponse.json({ error: 'missing ref' }, { status: 400 });
-  }
+  try {
+    const { searchParams, origin } = new URL(req.url);
+    const ref = searchParams.get('ref');
+    if (!ref) return NextResponse.json({ error: 'missing_ref' }, { status: 400 });
 
-  // 1) If INIT endpoint is configured, try to create session and use returned URL
-  const initUrl = process.env.WORLDLINE_INIT_ENDPOINT;
-  if (initUrl) {
-    try {
-      const method = (process.env.WORLDLINE_INIT_METHOD || 'POST').toUpperCase();
-      const headers = process.env.WORLDLINE_INIT_HEADERS ? JSON.parse(process.env.WORLDLINE_INIT_HEADERS) : {};
-      let body = undefined;
-      if (process.env.WORLDLINE_INIT_BODY_TEMPLATE) {
-        const template = process.env.WORLDLINE_INIT_BODY_TEMPLATE;
-        const replaced = template.replaceAll('{ref}', ref);
-        body = replaced;
-        if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
-      }
-      const resp = await fetch(initUrl, { method, headers, body });
-      const txt = await resp.text();
-      let json;
-      try { json = JSON.parse(txt); } catch (_e) { json = null; }
-
-      const link = json?.redirectUrl || json?.paymentUrl || json?.url || json?.hppUrl || json?.webPaymentUrl;
-      if (link) {
-        const absoluteLink = absolutify(link, req.url);
-        return NextResponse.redirect(absoluteLink, { status: 302 });
-      }
-
-      // If INIT endpoint returned a Location header (some gateways do that)
-      const loc = resp.headers.get('location');
-      if (loc) {
-        return NextResponse.redirect(absolutify(loc, req.url), { status: 302 });
-      }
-
-      // If it returned HTML, last resort: just return it (not ideal)
-      if (resp.ok && txt && txt.startsWith('<!DOCTYPE')) {
-        return new Response(txt, { status: resp.status, headers: { 'Content-Type': 'text/html' } });
-      }
-
-      // Fall through to configured HPP URL
-      console.warn('INIT endpoint returned no link; falling back. Body:', txt);
-    } catch (e) {
-      console.error('INIT call failed:', e);
-      // continue to fallback
+    const db = getAdminDb();
+    const snap = await db.collection('bookings').where('bookingRef', '==', ref).limit(1).get();
+    if (snap.empty) {
+      const fb = toAbsolute(`/success?ref=${encodeURIComponent(ref)}`, origin);
+      return NextResponse.redirect(fb, { status: 302 });
     }
-  }
+    const booking = snap.docs[0].data() || {};
 
-  // 2) Direct HPP URL mode
-  const direct = process.env.WORLDLINE_HPP_URL;
-  if (direct) {
-    const withRef = direct.includes('?') ? `${direct}&ref=${encodeURIComponent(ref)}` : `${direct}?ref=${encodeURIComponent(ref)}`;
-    const absolute = absolutify(withRef, req.url);
-    return NextResponse.redirect(absolute, { status: 302 });
-  }
+    const pkg = booking.packageType === 'package4' ? 'package4' : 'baseline';
+    const amountCents = pkg === 'package4' ? 19900 : 6500;
 
-  // 3) Final fallback: /success?ref=... (absolute)
-  const successAbs = absolutify(`/success?ref=${encodeURIComponent(ref)}`, req.url);
-  return NextResponse.redirect(successAbs, { status: 302 });
+    const base = process.env.WORLDLINE_API_BASE || 'https://secure.paymarkclick.co.nz';
+    const endpoint = `${base.replace(/\/+$/, '')}/api/payment`;
+
+    const accountId = process.env.WORLDPAY_ACCOUNT_ID || '';
+    const username = process.env.WORLDPAY_USERNAME || '';
+    const password = process.env.WORLDPAY_PASSWORD || '';
+
+    if (!accountId || !username || !password) {
+      const fb = toAbsolute(`/success?ref=${encodeURIComponent(ref)}`, origin);
+      return NextResponse.redirect(fb, { status: 302 });
+    }
+
+    const successUrl = toAbsolute(process.env.WORLDLINE_SUCCESS_URL || '/success', origin);
+    const cancelUrl  = toAbsolute(process.env.WORLDLINE_CANCEL_URL  || '/cancel', origin);
+    const errorUrl   = toAbsolute(process.env.WORLDLINE_ERROR_URL   || '/error', origin);
+
+    const body = {
+      amount: { total: amountCents, currency: 'NZD' },
+      merchant: { merchantId: accountId },
+      transaction: { reference: ref },
+      urls: { success: successUrl, cancel: cancelUrl, error: errorUrl },
+    };
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': basicAuth(username, password),
+      },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+
+    let payUrl = null;
+    const text = await res.text();
+    try {
+      const j = JSON.parse(text);
+      payUrl = j?.redirectUrl || j?.paymentUrl || j?.url || j?.hppUrl || j?.webPaymentUrl || null;
+    } catch {}
+
+    if (res.ok && payUrl) {
+      const absolute = toAbsolute(payUrl, origin);
+      return NextResponse.redirect(absolute, { status: 302 });
+    }
+
+    const fallback = toAbsolute(`/success?ref=${encodeURIComponent(ref)}&gw=fail`, origin);
+    return NextResponse.redirect(fallback, { status: 302 });
+  } catch (e) {
+    console.error('GET /api/hpp/start error', e);
+    const origin = req?.url ? new URL(req.url).origin : 'https://good2go-rth.com';
+    const fb = toAbsolute('/success?ref=UNKNOWN&err=server', origin);
+    return NextResponse.redirect(fb, { status: 302 });
+  }
 }
