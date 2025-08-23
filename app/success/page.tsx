@@ -1,16 +1,14 @@
 
 // app/success/page.tsx
-"use client";
-
-import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-
+// Server component version (no client hooks). Avoids Suspense/revalidate issues.
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-function SuccessInner() {
-  const params = useSearchParams();
-  const bid = params.get("bid");
+export default function SuccessPage({
+  searchParams,
+}: {
+  searchParams?: { bid?: string };
+}) {
+  const bid = searchParams?.bid ?? null;
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-center p-6">
@@ -31,20 +29,5 @@ function SuccessInner() {
         Return to Home
       </a>
     </main>
-  );
-}
-
-export default function SuccessPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="flex flex-col items-center justify-center min-h-screen text-center p-6">
-          <h1 className="text-2xl font-semibold mb-2">Loading…</h1>
-          <p>Please wait while we prepare your confirmation.</p>
-        </main>
-      }
-    >
-      <SuccessInner />
-    </Suspense>
   );
 }
