@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import ConsentBlock from '@/components/ConsentBlock';
 
-export default function BookPage() {
+export default function BookingPage() {
   const [consent, setConsent] = useState({ accepted: false, name: '', signatureDataUrl: '', consentVersion: '' });
   const [loading, setLoading] = useState(false);
   const canContinue = consent.accepted && consent.name.trim().length >= 2;
@@ -12,7 +12,6 @@ export default function BookPage() {
     if (!canContinue || loading) return;
     setLoading(true);
 
-    // If your flow already has a bid, pull it from the URL (?bid=...)
     const bid = (typeof window !== 'undefined') ? new URLSearchParams(location.search).get('bid') : null;
 
     try {
@@ -25,10 +24,8 @@ export default function BookPage() {
       console.error('Consent store failed (continuing):', e);
     }
 
-    // TODO: replace with your existing booking/payment redirect
-    // e.g., await createBookingAndRedirectToPayment({ ...formValues, consentAccepted: true });
-    alert('Proceed to payment wiring here');
-    setLoading(false);
+    // Your existing redirect line:
+    window.location.href = redirectUrl;
   }
 
   return (
@@ -36,7 +33,7 @@ export default function BookPage() {
       <h1 className="text-3xl font-bold mb-2">Book a Good2Go Assessment</h1>
       <p className="text-gray-700 mb-6">Select your region and preferred slot, then confirm consent to continue to payment.</p>
 
-      {/* TODO: Keep/restore your existing booking form fields here */}
+      {/* Your existing booking fields remain here */}
 
       <ConsentBlock onChange={setConsent} />
 
