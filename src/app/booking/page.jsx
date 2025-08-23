@@ -65,7 +65,7 @@ export default function Page() {{
 
   return (
     <main className="px-6 py-10 max-w-3xl mx-auto">
-      <div className="text-xs text-white bg-black inline-block px-2 py-1 rounded">Consent inline build v0823-catchall — /booking</div>
+      <div className="text-xs text-white bg-black inline-block px-2 py-1 rounded">Consent inline build v0823-catchall — /booking (src)</div>
       <h1 className="text-3xl font-bold mt-3">Book a Good2Go Assessment</h1>
       <p className="text-gray-700 mb-6">Select your region and preferred slot, then confirm consent to continue to payment.</p>
       <ConsentInline onChange={{setConsent}}/>
