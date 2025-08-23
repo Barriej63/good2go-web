@@ -27,7 +27,7 @@ export async function POST(req) {
       }
     }
 
-    // Fallback: store standalone consent entry (e.g., before booking doc exists)
+    // Fallback: store standalone consent entry if booking isn't created yet
     const ref = await db.collection('standalone_consents').add(payload);
     return NextResponse.json({ ok: true, attachedTo: 'standalone', id: ref.id });
   } catch (err) {

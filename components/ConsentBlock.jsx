@@ -14,7 +14,6 @@ export default function ConsentBlock({ onChange, initial = {} }) {
     onChange?.({ accepted, name: name.trim(), signatureDataUrl: sigDataUrl, consentVersion: CONSENT_VERSION });
   }, [accepted, name, sigDataUrl]);
 
-  // Simple signature capture
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -62,8 +61,8 @@ export default function ConsentBlock({ onChange, initial = {} }) {
       canvas.removeEventListener('mousedown', onDown);
       canvas.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      canvas.removeEventListener('touchstart', onDown);
-      canvas.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchstart', onDown);
+      window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onUp);
       window.removeEventListener('resize', onResize);
     };
