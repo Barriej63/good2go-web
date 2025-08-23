@@ -4,18 +4,23 @@ import { getAdminDb } from '@/lib/firebaseAdmin';
 export const dynamic = 'force-dynamic';
 
 type SlotDef = {
-  weekday: number;           // 0=Sun ... 6=Sat
-  start: string;             // "HH:mm"
-  end: string;               // "HH:mm"
+  weekday: number;           // 0=Sun..6=Sat
+  start: string;
+  end: string;
   venueAddress?: string | null;
   note?: string | null;
 };
 
-function nameToWeekday(v: unknown): number | null {
+type SlotsOut = {
+  regions: string[];
+  slots: Record<string, SlotDef[]>;
+};
+
+function toWeekday(v: unknown): number | null {
   if (typeof v === 'number' && v >= 0 && v <= 6) return v;
   if (typeof v !== 'string') return null;
   const s = v.trim().toLowerCase();
-  const table: Record<string, number> = {
+  const map: Record<string, number> = {
     sun: 0, sunday: 0,
     mon: 1, monday: 1,
     tue: 2, tuesday: 2,
@@ -24,67 +29,68 @@ function nameToWeekday(v: unknown): number | null {
     fri: 5, friday: 5,
     sat: 6, saturday: 6,
   };
-  return table[s] ?? null;
+  return map[s] ?? null;
 }
 
-function normRegionFromDocId(id: string): string {
-  // timeslots_<Region> or timeslots-<Region>
+function regionFromId(id: string): string | null {
+  // Accept timeslots_<Region> or timeslots-<Region>
   const m = id.match(/^timeslots[-_](.+)$/i);
-  return m ? m[1] : id;
+  if (!m) return null;
+  // Preserve region name exactly as in Firestore (incl. spaces/case)
+  return m[1];
 }
 
 export async function GET() {
   const db = getAdminDb();
   const snap = await db.collection('config').get();
 
-  const slots: Record<string, SlotDef[]> = {};
+  const out: SlotsOut = { regions: [], slots: {} };
 
-  // Use typed iteration to avoid implicit any
   for (const doc of snap.docs) {
-    const id: string = doc.id;
-    if (!/^timeslots[-_]/i.test(id)) continue;
+    const rawId = doc.id;
+    const region = regionFromId(rawId);
+    if (!region) continue;
 
-    const data = doc.data() as Record<string, any>;
-    const region = normRegionFromDocId(id);
+    const data = doc.data() as any;
+    const list: SlotDef[] = [];
 
-    const push = (s: SlotDef) => {
-      if (!slots[region]) slots[region] = [];
-      slots[region].push(s);
-    };
+    const push = (s: SlotDef) => list.push(s);
 
-    // Style A: array under 'slots'
-    if (Array.isArray(data.slots)) {
-      for (const raw of data.slots as any[]) {
-        const wd = nameToWeekday((raw as any).weekday ?? (raw as any).weekdays);
-        const start = (raw as any).start;
-        const end = (raw as any).end;
-        if (wd == null || !start || !end) continue;
+    // Style A: explicit array
+    if (Array.isArray(data?.slots)) {
+      for (const it of data.slots as any[]) {
+        const wd = toWeekday(it?.weekday ?? it?.weekdays);
+        const st = it?.start;
+        const en = it?.end;
+        if (wd == null || !st || !en) continue;
         push({
           weekday: wd,
-          start,
-          end,
-          venueAddress: (raw as any).venueAddress ?? null,
-          note: (raw as any).note ?? null,
+          start: String(st),
+          end: String(en),
+          venueAddress: it?.venueAddress ?? null,
+          note: it?.note ?? null,
         });
       }
-      continue;
     }
 
-    // Style B: top-level fields
-    const wdTop = nameToWeekday((data as any).weekday ?? (data as any).weekdays);
-    if (wdTop != null && data.start && data.end) {
+    // Style B: single top-level fields
+    const wdTop = toWeekday(data?.weekday ?? data?.weekdays);
+    if (wdTop != null && data?.start && data?.end) {
       push({
         weekday: wdTop,
-        start: data.start,
-        end: data.end,
-        venueAddress: data.venueAddress ?? null,
-        note: data.note ?? null,
+        start: String(data.start),
+        end: String(data.end),
+        venueAddress: data?.venueAddress ?? null,
+        note: data?.note ?? null,
       });
     }
+
+    // Ensure the region is present even if no valid slots
+    out.slots[region] = list;
   }
 
-  // Build regions list
-  const regions = Object.keys(slots).sort((a, b) => a.localeCompare(b));
+  // Regions list = all keys, keep stable alpha sort
+  out.regions = Object.keys(out.slots).sort((a, b) => a.localeCompare(b));
 
-  return NextResponse.json({ regions, slots }, { status: 200 });
+  return NextResponse.json(out, { status: 200 });
 }
