@@ -1,100 +1,155 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebaseAdmin';
-import { toWeekdayNumber } from '@/lib/weekdays';
+import type { Firestore, QueryDocumentSnapshot, DocumentData } from 'firebase-admin/firestore';
 
 export const dynamic = 'force-dynamic';
 
-function auth(req: Request) {
-  const hdr = (req.headers.get('x-admin-token') || '').trim();
-  const token = process.env.ADMIN_TOKEN || '';
-  return token && hdr && hdr === token;
+function unauthorized() {
+  return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+}
+
+function ensureAuth(req: NextRequest) {
+  const want = process.env.ADMIN_TOKEN || '';
+  const got = req.headers.get('x-admin-token') || '';
+  if (!want || got !== want) {
+    return unauthorized();
+  }
+  return null;
+}
+
+type SlotDef = {
+  weekday: number | string;
+  start: string;
+  end: string;
+  venueAddress?: string;
+  note?: string;
+};
+
+function normalizeWeekday(w: number | string): number {
+  if (typeof w === 'number') return Math.max(0, Math.min(6, w));
+  const map: Record<string, number> = {
+    sunday: 0, sun: 0,
+    monday: 1, mon: 1,
+    tuesday: 2, tue: 2, tues: 2,
+    wednesday: 3, wed: 3,
+    thursday: 4, thu: 4, thurs: 4,
+    friday: 5, fri: 5,
+    saturday: 6, sat: 6,
+  };
+  return map[w.toLowerCase()] ?? 0;
 }
 
 function docIdForRegion(region: string) {
-  return 'timeslots_' + region;
+  return `timeslots_${region}`;
 }
 
-export async function GET(req: Request) {
-  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  const db = getAdminDb();
+export async function GET(req: NextRequest) {
+  const authErr = ensureAuth(req);
+  if (authErr) return authErr;
+
+  const db = getAdminDb() as unknown as Firestore;
   const snap = await db.collection('config').get();
-  const out: any[] = [];
-  snap.forEach(d => {
-    if (!/^timeslots[_-]/i.test(d.id)) return;
-    out.push({ id: d.id, data: d.data() });
-  });
-  return NextResponse.json({ ok: true, docs: out });
+
+  const out: Array<{ id: string; data: DocumentData }> = [];
+  const docs = snap.docs as QueryDocumentSnapshot<DocumentData>[];
+  for (const d of docs) {
+    const id = d.id;
+    if (!/^timeslots[_-]/i.test(id)) continue;
+    out.push({ id, data: d.data() });
+  }
+
+  return NextResponse.json({ docs: out });
 }
 
-export async function POST(req: Request) {
-  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+export async function POST(req: NextRequest) {
+  const authErr = ensureAuth(req);
+  if (authErr) return authErr;
+
   const body = await req.json();
-  const { region, weekday, start, end, venueAddress = '', note = '' } = body || {};
-  const wd = toWeekdayNumber(weekday);
-  if (!region || wd===null || !start || !end) return NextResponse.json({ error: 'invalid_payload' }, { status: 400 });
-
-  const db = getAdminDb();
-  const ref = db.collection('config').doc(docIdForRegion(region));
-  const doc = await ref.get();
-
-  let slots: any[] = [];
-  if (doc.exists) {
-    const data = doc.data() || {};
-    if (Array.isArray(data.slots)) slots = data.slots;
-    else if (data.start && data.end && (data.weekday || data.weekdays)) {
-      const wdTop = toWeekdayNumber(data.weekday ?? data.weekdays);
-      if (wdTop !== null) slots.push({ weekday: wdTop, start: data.start, end: data.end, venueAddress: data.venueAddress || '', note: data.note || '' });
-    }
+  const { region, slot } = body || {};
+  if (!region || !slot) {
+    return NextResponse.json({ error: 'missing region or slot' }, { status: 400 });
   }
-  slots.push({ weekday: wd, start, end, venueAddress, note });
-  await ref.set({ slots }, { merge: true });
-  return NextResponse.json({ ok: true, count: slots.length });
-}
 
-export async function PATCH(req: Request) {
-  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-  const body = await req.json();
-  const { region, index, venueAddress, note } = body || {};
-  if (!region || typeof index !== 'number') return NextResponse.json({ error: 'invalid_payload' }, { status: 400 });
+  const db = getAdminDb() as unknown as Firestore;
+  const docRef = db.collection('config').doc(docIdForRegion(region));
+  const docSnap = await docRef.get();
 
-  const db = getAdminDb();
-  const ref = db.collection('config').doc(docIdForRegion(region));
-  const doc = await ref.get();
-  if (!doc.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  const data = doc.data() || {};
-  let slots: any[] = [];
-  if (Array.isArray(data.slots)) slots = data.slots;
-  else if (data.start && data.end && (data.weekday || data.weekdays)) {
-    const wdTop = toWeekdayNumber(data.weekday ?? data.weekdays);
-    if (wdTop !== null) slots.push({ weekday: wdTop, start: data.start, end: data.end, venueAddress: data.venueAddress || '', note: data.note || '' });
+  const addSlot: SlotDef = {
+    weekday: normalizeWeekday(slot.weekday),
+    start: String(slot.start),
+    end: String(slot.end),
+    venueAddress: slot.venueAddress || '',
+    note: slot.note || '',
+  };
+
+  if (!docSnap.exists) {
+    await docRef.set({ slots: [addSlot] }, { merge: true });
+  } else {
+    const data = docSnap.data() || {};
+    const arr: SlotDef[] = Array.isArray(data.slots) ? data.slots : [];
+    arr.push(addSlot);
+    await docRef.set({ slots: arr }, { merge: true });
   }
-  if (index < 0 || index >= slots.length) return NextResponse.json({ error: 'bad_index' }, { status: 400 });
-  if (typeof venueAddress === 'string') slots[index].venueAddress = venueAddress;
-  if (typeof note === 'string') slots[index].note = note;
-  await ref.set({ slots }, { merge: true });
+
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(req: Request) {
-  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+export async function PATCH(req: NextRequest) {
+  const authErr = ensureAuth(req);
+  if (authErr) return authErr;
+
+  const { region, index, venueAddress, note } = await req.json();
+  if (!region || typeof index !== 'number') {
+    return NextResponse.json({ error: 'missing region or index' }, { status: 400 });
+  }
+
+  const db = getAdminDb() as unknown as Firestore;
+  const docRef = db.collection('config').doc(docIdForRegion(region));
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  const data = docSnap.data() || {};
+  const arr: SlotDef[] = Array.isArray(data.slots) ? data.slots : [];
+  if (index < 0 || index >= arr.length) {
+    return NextResponse.json({ error: 'index_out_of_range' }, { status: 400 });
+  }
+
+  const current = arr[index] || {};
+  arr[index] = {
+    ...current,
+    venueAddress: typeof venueAddress === 'string' ? venueAddress : current.venueAddress,
+    note: typeof note === 'string' ? note : current.note,
+  };
+
+  await docRef.set({ slots: arr }, { merge: true });
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(req: NextRequest) {
+  const authErr = ensureAuth(req);
+  if (authErr) return authErr;
+
   const { searchParams } = new URL(req.url);
   const region = searchParams.get('region');
-  const indexStr = searchParams.get('index');
-  if (!region || indexStr === null) return NextResponse.json({ error: 'invalid_params' }, { status: 400 });
-  const index = parseInt(indexStr, 10);
-  const db = getAdminDb();
-  const ref = db.collection('config').doc(docIdForRegion(region));
-  const doc = await ref.get();
-  if (!doc.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  const data = doc.data() || {};
-  let slots: any[] = [];
-  if (Array.isArray(data.slots)) slots = data.slots;
-  else if (data.start && data.end && (data.weekday || data.weekdays)) {
-    const wdTop = toWeekdayNumber(data.weekday ?? data.weekdays);
-    if (wdTop !== null) slots.push({ weekday: wdTop, start: data.start, end: data.end, venueAddress: data.venueAddress || '', note: data.note || '' });
+  const idxStr = searchParams.get('index');
+  if (!region || idxStr === null) {
+    return NextResponse.json({ error: 'missing region or index' }, { status: 400 });
   }
-  if (isNaN(index) || index < 0 || index >= slots.length) return NextResponse.json({ error: 'bad_index' }, { status: 400 });
-  slots.splice(index, 1);
-  await ref.set({ slots }, { merge: true });
-  return NextResponse.json({ ok: true, count: slots.length });
+  const index = Number(idxStr);
+
+  const db = getAdminDb() as unknown as Firestore;
+  const docRef = db.collection('config').doc(docIdForRegion(region));
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  const data = docSnap.data() || {};
+  const arr: SlotDef[] = Array.isArray(data.slots) ? data.slots : [];
+  if (index < 0 || index >= arr.length) {
+    return NextResponse.json({ error: 'index_out_of_range' }, { status: 400 });
+  }
+  arr.splice(index, 1);
+  await docRef.set({ slots: arr }, { merge: true });
+
+  return NextResponse.json({ ok: true });
 }
