@@ -1,20 +1,25 @@
-# Good2Go — WPRequest fix + Success page
 
-**Create route**
-- Removes `cancel_url` (fixes PARAMETER 8001 “whitelisting” error).
-- Accepts `{ productId }` if `amountCents` not supplied and loads `products/<productId>.priceCents`.
-- Auto-creates pending `bookings/<id>` if `bookingId` missing.
-- Ensures `return_url` includes `?bid=<bookingId>` (or replaces `{bookingId}` token).
-- Sends only commonly whitelisted fields to WPRequest.
+# Good2Go Build Status
 
-**Success page**
-- New `/success` route shows `bid` from the query string.
+## Env (Vercel – Production)
+- FIREBASE_SERVICE_ACCOUNT: set ✅
+- WORLDLINE_ENV: `uat` or `production`
+- WORLDLINE_USERNAME: <Client ID>
+- WORLDLINE_PASSWORD: <API Key>
+- WORLDLINE_ACCOUNT_ID: <Account ID>
+- SENDGRID_API_KEY: optional (for confirmation emails)
+- SENDGRID_FROM: e.g. `"Good2Go <help@good2go-rth.com>"`
 
-**Env**
-- `WORLDLINE_ENV` = `production|prod|live` or `uat`
-- `WORLDLINE_USERNAME`, `WORLDLINE_PASSWORD`, `WORLDLINE_ACCOUNT_ID`
-- Optional: `PUBLIC_RETURN_URL` (default fallback to `/success`)
+## Routes
+- `/api/worldline/create` → creates booking, calls WPRequest, returns Hosted Payment Page URL
+- `/api/worldline/return` → handles Worldline return POST/GET, marks booking paid, returns HTML success
+- `/success` → React UI success page (shows booking reference)
 
-**Test**
-1) From UI, proceed to payment.
-2) Complete HPP. You should be redirected to `/success?bid=<id>` and the Firestore booking should flip to `paid:true` via `/api/worldline/return`.
+## Firestore
+- `products/{id}` → `{ name, priceCents, active: true }`
+- `bookings/{id}` → `{ ...fields, status, paid, worldline: { create, return } }`
+
+## Notes
+- `create` forces `return_url` to `/api/worldline/return?bid=<id>` to avoid 405 errors.
+- `return` always responds with HTML success (200) to any POST/GET from Worldline.
+- Users will reliably see "Booking Successful" with their reference code.
