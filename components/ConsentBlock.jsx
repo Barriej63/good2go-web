@@ -14,6 +14,7 @@ export default function ConsentBlock({ onChange, initial = {} }) {
     onChange?.({ accepted, name: name.trim(), signatureDataUrl: sigDataUrl, consentVersion: CONSENT_VERSION });
   }, [accepted, name, sigDataUrl]);
 
+  // Simple signature capture (optional)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -45,7 +46,9 @@ export default function ConsentBlock({ onChange, initial = {} }) {
       setDrawing(false);
       setSigDataUrl(canvas.toDataURL('image/png'));
     }
-    function onResize() { rect = canvas.getBoundingClientRect(); }
+    function onResize() {
+      rect = canvas.getBoundingClientRect();
+    }
 
     canvas.addEventListener('mousedown', onDown);
     canvas.addEventListener('mousemove', onMove);

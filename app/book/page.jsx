@@ -2,95 +2,70 @@
 import React, { useState } from 'react';
 import ConsentBlock from '@/components/ConsentBlock';
 
-// ---- Helper: adapt this to YOUR existing booking/payment call ----
-// Priority order:
-// 1) If you already expose window.createBookingAndGetRedirectUrl(formValues),
-//    we'll call that and use its { redirectUrl } result.
-// 2) Else we'll POST to /api/book with minimal payload and expect { redirectUrl }.
-//    If your endpoint is different, change BOOK_API_PATH below.
-
-const BOOK_API_PATH = '/api/book';
-
-async function getRedirectUrl(formValues) {
-  // Option 1: use your existing global helper if available
-  if (typeof window !== 'undefined' && typeof window.createBookingAndGetRedirectUrl === 'function') {
-    const res = await window.createBookingAndGetRedirectUrl(formValues);
-    const url = res?.redirectUrl || res?.paymentUrl || res?.url;
-    if (!url) throw new Error('createBookingAndGetRedirectUrl() did not return redirectUrl');
-    return url;
-  }
-
-  // Option 2: call your API directly (default: /api/book)
-  const r = await fetch(BOOK_API_PATH, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(formValues || {}),
-  });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`Booking API failed (${r.status}): ${txt}`);
-  }
-  const data = await r.json();
-  const url = data?.redirectUrl || data?.paymentUrl || data?.url;
-  if (!url) throw new Error('Booking API did not return redirectUrl');
-  return url;
-}
-
 export default function BookPage() {
-  // Minimal local state for consent gating
   const [consent, setConsent] = useState({ accepted: false, name: '', signatureDataUrl: '', consentVersion: '' });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
   const canContinue = consent.accepted && consent.name.trim().length >= 2;
 
-  // TODO: Replace these placeholders with your real booking form values.
-  // If you already have state for region/slot/customer, merge it here.
-  function collectFormValues() {
-    // Pull from existing inputs if needed
-    const usp = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
-    const bid = usp.get('bid'); // optional, if already known
-    return {
-      // ---- Replace with your real fields ----
-      region: (document.getElementById('region')?.value || usp.get('region') || '').trim(),
-      slot: (document.getElementById('slot')?.value || usp.get('slot') || '').trim(),
-      name: (document.getElementById('fullName')?.value || '').trim(),
-      email: (document.getElementById('email')?.value || '').trim(),
-      // ---------------------------------------
-      consentAccepted: true,
-      bid,
-    };
+  function getBidFromUrl() {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    return params.get('bid') || params.get('ref') || null;
   }
 
   async function handleContinue(e) {
     e.preventDefault();
     if (!canContinue || loading) return;
     setLoading(true);
-    setError('');
 
-    const usp = new URLSearchParams(window.location.search);
-    const bid = usp.get('bid');
+    const bid = getBidFromUrl();
 
-    // Best-effort: store consent before redirect
+    // Best-effort: store consent before redirecting
     try {
       await fetch('/api/consent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bid, consent }),
       });
-    } catch (e) {
-      console.warn('Consent save failed (continuing):', e);
+    } catch (err) {
+      console.error('Consent save failed (continuing to payment):', err);
     }
 
+    // Obtain the redirectUrl using your existing logic.
+    // Path A: some projects expose a helper on window
+    let redirectUrl = null;
     try {
-      const formValues = collectFormValues();
-      const redirectUrl = await getRedirectUrl(formValues);
-      window.location.href = redirectUrl; // <-- your actual redirect
-    } catch (e) {
-      console.error(e);
-      setError(e.message || 'Failed to start payment');
-      setLoading(false);
+      if (typeof window !== 'undefined' && typeof window.createBookingAndGetRedirectUrl === 'function') {
+        const res = await window.createBookingAndGetRedirectUrl({ consentAccepted: true, consentName: consent.name });
+        redirectUrl = res?.redirectUrl || null;
+      }
+    } catch (err) {
+      console.error('Helper redirect failed, falling back to API...', err);
     }
+
+    // Path B: fallback to calling your booking API which should return { redirectUrl }
+    if (!redirectUrl) {
+      try {
+        const r = await fetch('/api/book', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ consentAccepted: true, consentName: consent.name }),
+        });
+        const data = await r.json();
+        redirectUrl = data?.redirectUrl || null;
+      } catch (err) {
+        console.error('API redirect fetch failed:', err);
+      }
+    }
+
+    if (!redirectUrl) {
+      setLoading(false);
+      alert('Could not get payment link. Please try again or contact support.');
+      return;
+    }
+
+    // Your project uses this exact pattern:
+    window.location.href = redirectUrl;
   }
 
   return (
@@ -98,29 +73,25 @@ export default function BookPage() {
       <h1 className="text-3xl font-bold mb-2">Book a Good2Go Assessment</h1>
       <p className="text-gray-700 mb-6">Select your region and preferred slot, then confirm consent to continue to payment.</p>
 
-      {/*
-        Your existing booking form stays here.
-        If you want this page to read values automatically, give inputs these ids:
-          - region (select/text)
-          - slot (select/text)
-          - fullName (text)
-          - email (email)
-      */}
+      {/* Your existing booking fields remain above the consent block. */}
 
       <ConsentBlock onChange={setConsent} />
 
-      <div className="mt-6 flex gap-3 items-center">
+      <div className="mt-6 flex gap-3">
         <button
           onClick={handleContinue}
           disabled={!canContinue || loading}
           className={`px-4 py-2 rounded-xl text-white ${canContinue ? 'bg-black' : 'bg-gray-400 cursor-not-allowed'}`}
         >
-          {loading ? 'Processing…' : 'Continue to Payment'}
+          {loading ? 'Processing...' : 'Continue to Payment'}
         </button>
-        {!canContinue && <span className="text-sm text-gray-600">Tick consent and enter full name to continue.</span>}
+        <a className="px-4 py-2 rounded-xl border" href="/">Cancel</a>
       </div>
-
-      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {!canContinue && (
+        <p className="text-sm text-red-600 mt-2">
+          Please tick the consent box and enter your full name to continue.
+        </p>
+      )}
     </main>
   );
 }
