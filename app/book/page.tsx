@@ -14,24 +14,126 @@ type SlotsResponse = {
   slots: Record<string, SlotDef[]>;
 };
 
+const WD_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const WD_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
 function fmtISODate(d: Date) {
-  // format as YYYY-MM-DD in local time
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
 
+function parseISODate(v: string) {
+  const [y,m,d] = v.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m-1, d);
+}
+
 function nextDateForWeekday(from: Date, weekday: number) {
-  // returns next date >= today that matches weekday (local tz)
   const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
   const delta = (weekday - d.getDay() + 7) % 7;
   d.setDate(d.getDate() + delta);
   return d;
 }
 
+function startOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function endOfMonth(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+}
+
+function Calendar({
+  selectedISO,
+  onSelect,
+  allowedWeekday,           // number 0..6
+}: {
+  selectedISO: string;
+  onSelect: (iso: string) => void;
+  allowedWeekday: number | null;
+}) {
+  const [cursor, setCursor] = useState<Date>(() => {
+    const s = parseISODate(selectedISO);
+    return s ?? new Date();
+  });
+
+  useEffect(() => {
+    const s = parseISODate(selectedISO);
+    if (s) setCursor(s);
+  }, [selectedISO]);
+
+  const monthStart = startOfMonth(cursor);
+  const monthEnd = endOfMonth(cursor);
+  const monthLabel = cursor.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+  const pad = monthStart.getDay(); // number of leading blanks
+
+  const days: (Date | null)[] = [];
+  for (let i = 0; i < pad; i++) days.push(null);
+  for (let d = 1; d <= monthEnd.getDate(); d++) {
+    days.push(new Date(cursor.getFullYear(), cursor.getMonth(), d));
+  }
+
+  const selected = parseISODate(selectedISO);
+
+  function cellClasses(d: Date | null) {
+    if (!d) return 'h-10';
+    const isAllowed = allowedWeekday == null ? true : d.getDay() === allowedWeekday;
+    const isPast = d < new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+    const base = 'h-10 w-10 flex items-center justify-center rounded-full';
+    if (!isAllowed || isPast) return base + ' text-gray-400';
+    const isSel = selected && d.toDateString() === selected.toDateString();
+    return base + (isSel ? ' bg-black text-white' : ' hover:bg-black/10 cursor-pointer');
+  }
+
+  return (
+    <div className="border rounded-2xl p-4 inline-block">
+      <div className="flex items-center justify-between mb-2">
+        <button
+          type="button"
+          className="px-2 py-1 border rounded-lg"
+          onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
+        >
+          ‹
+        </button>
+        <div className="font-medium">{monthLabel}</div>
+        <button
+          type="button"
+          className="px-2 py-1 border rounded-lg"
+          onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
+        >
+          ›
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-xs text-gray-500 mb-1">
+        {WD_LABELS.map((w) => <div key={w} className="h-6 flex items-center justify-center">{w}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {days.map((d, i) => (
+          <div key={i} className="flex items-center justify-center">
+            {d ? (
+              <div
+                className={cellClasses(d)}
+                onClick={() => {
+                  const isAllowed = allowedWeekday == null ? true : d.getDay() === allowedWeekday;
+                  const isPast = d < new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+                  if (!isAllowed || isPast) return;
+                  onSelect(fmtISODate(d));
+                }}
+              >
+                {d.getDate()}
+              </div>
+            ) : (
+              <div className="h-10" />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function BookCalendarPage() {
-  // form state (kept minimal so we don't disturb your existing fields)
   const [data, setData] = useState<SlotsResponse>({ regions: [], slots: {} });
   const [region, setRegion] = useState<string>('');
   const [slotIndex, setSlotIndex] = useState<number>(0);
@@ -43,8 +145,6 @@ export default function BookCalendarPage() {
   const [consentOK, setConsentOK] = useState(false);
   const [consentName, setConsentName] = useState('');
   const [processing, setProcessing] = useState(false);
-
-  const todayISO = useMemo(() => fmtISODate(new Date()), []);
 
   useEffect(() => {
     (async () => {
@@ -61,7 +161,6 @@ export default function BookCalendarPage() {
     })();
   }, []);
 
-  // when region/slot changes, prefill date to next matching weekday
   useEffect(() => {
     if (!region || !data.slots[region] || data.slots[region].length === 0) return;
     const slot = data.slots[region][slotIndex] || data.slots[region][0];
@@ -76,9 +175,8 @@ export default function BookCalendarPage() {
 
   const dateMatchesWeekday = useMemo(() => {
     if (!currentSlot || !dateISO) return false;
-    const parts = dateISO.split('-').map(Number);
-    if (parts.length !== 3) return false;
-    const d = new Date(parts[0], parts[1]-1, parts[2]);
+    const d = parseISODate(dateISO);
+    if (!d) return false;
     return d.getDay() === currentSlot.weekday;
   }, [dateISO, currentSlot]);
 
@@ -95,7 +193,6 @@ export default function BookCalendarPage() {
     if (!canContinue || !currentSlot) return;
     setProcessing(true);
     try {
-      // save consent best-effort
       await fetch('/api/consent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -110,7 +207,6 @@ export default function BookCalendarPage() {
         })
       });
 
-      // Build legacy slot string for your current /api/book while also sending structured fields
       const slotStr = `${dateISO} ${currentSlot.start}–${currentSlot.end}`;
 
       const res = await fetch('/api/book', {
@@ -124,7 +220,6 @@ export default function BookCalendarPage() {
           venue: currentSlot.venueAddress || '',
           referringName: medName || '',
           consentAccepted: true,
-          // structured:
           dateISO,
           start: currentSlot.start,
           end: currentSlot.end,
@@ -153,7 +248,7 @@ export default function BookCalendarPage() {
 
   return (
     <main className="max-w-3xl mx-auto px-6 py-8">
-      <div className="text-xs text-gray-500 mb-2">build: app/book/page.tsx • calendar-date • 2025‑08‑24</div>
+      <div className="text-xs text-gray-500 mb-2">build: app/book/page.tsx • calendar-highlight • 2025‑08‑24</div>
       <h1 className="text-3xl font-bold mb-6">Book a Good2Go Assessment</h1>
 
       {/* Region */}
@@ -176,28 +271,27 @@ export default function BookCalendarPage() {
       >
         {timesForRegion.map((s, i) => (
           <option key={i} value={i}>
-            {s.start}–{s.end}
+            {s.start}–{s.end} ({WD_FULL[s.weekday]}s)
           </option>
         ))}
       </select>
 
-      {/* Date: calendar input */}
+      {/* Visual calendar with allowed days enabled */}
       <label className="block mb-2 font-medium">Date</label>
-      <input
-        type="date"
-        min={todayISO}
-        value={dateISO}
-        onChange={(e) => setDateISO(e.target.value)}
-        className="border rounded-xl px-3 py-2 mb-2 w-full max-w-xs"
-        disabled={!currentSlot}
-      />
+      <div className="mb-2">
+        <Calendar
+          selectedISO={dateISO}
+          onSelect={setDateISO}
+          allowedWeekday={currentSlot ? currentSlot.weekday : null}
+        />
+      </div>
       {!dateMatchesWeekday && currentSlot && (
         <p className="text-sm text-red-600 mb-4">
-          Please pick a {['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][currentSlot.weekday]} to match this clinic’s schedule.
+          Please pick a {WD_FULL[currentSlot.weekday]} to match this clinic’s schedule.
         </p>
       )}
 
-      {/* Client + emails (kept as-is per your request) */}
+      {/* Client + emails (unchanged) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
         <div>
           <label className="block mb-1 font-medium">Client Name</label>
