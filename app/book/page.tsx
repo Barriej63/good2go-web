@@ -2,69 +2,68 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 type SlotDef = {
-  weekday: number;      // 0..6 Sun..Sat
+  weekday: number;      // 0=Sun..6=Sat
   start: string;
   end: string;
   venueAddress?: string | null;
   note?: string | null;
 };
-
 type SlotsResponse = {
   regions: string[];
   slots: Record<string, SlotDef[]>;
 };
 
-type PackageType = 'baseline' | 'package4';
+const WEEKDAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-function fmtISODate(d: Date) {
+function fmtISO(d: Date) {
   const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
   return `${y}-${m}-${day}`;
 }
-
-function addDays(d: Date, days: number) {
-  const n = new Date(d);
-  n.setDate(n.getDate() + days);
-  return n;
+function parseISO(iso: string) {
+  const [y,m,d] = iso.split('-').map(Number);
+  return new Date(y, (m||1)-1, d||1);
 }
-
-function getMonthMatrix(year: number, monthIdx: number) {
-  // returns a 6x7 matrix of Date | null for display
-  const first = new Date(year, monthIdx, 1);
-  const startOffset = first.getDay(); // 0..6
-  const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
-  const cells: (Date | null)[] = Array(startOffset).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, monthIdx, d));
-  while (cells.length % 7 !== 0) cells.push(null);
-  while (cells.length < 42) cells.push(null); // 6 weeks
-  const weeks: (Date | null)[][] = [];
-  for (let i = 0; i < 6; i++) weeks.push(cells.slice(i * 7, (i + 1) * 7));
-  return weeks;
+function addDays(iso: string, days: number) {
+  const d = parseISO(iso);
+  d.setDate(d.getDate() + days);
+  return fmtISO(d);
 }
-
-const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+function daysInMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth()+1, 0).getDate();
+}
+function monthName(date: Date) {
+  return date.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+}
+function nextOnWeekday(fromIso: string, weekday: number) {
+  const d = parseISO(fromIso);
+  const delta = (weekday - d.getDay() + 7) % 7;
+  d.setDate(d.getDate() + delta);
+  return fmtISO(d);
+}
 
 export default function BookPage() {
   const [data, setData] = useState<SlotsResponse>({ regions: [], slots: {} });
   const [region, setRegion] = useState('');
   const [slotIndex, setSlotIndex] = useState(0);
-  const [pkg, setPkg] = useState<PackageType>('baseline');
-  const [clientName, setClientName] = useState('');
+  const [packageType, setPackageType] = useState<'baseline'|'package4'>('baseline');
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [yourEmail, setYourEmail] = useState('');
+  const [clientName, setClientName] = useState('');
   const [medName, setMedName] = useState('');
   const [medEmail, setMedEmail] = useState('');
   const [consentOK, setConsentOK] = useState(false);
   const [consentName, setConsentName] = useState('');
   const [processing, setProcessing] = useState(false);
 
-  const now = new Date();
-  const thisYear = now.getFullYear();
-  const thisMonth = now.getMonth();
-  const nextMonthDate = new Date(thisYear, thisMonth + 1, 1);
-
-  const weeksThis = useMemo(() => getMonthMatrix(thisYear, thisMonth), [thisYear, thisMonth]);
-  const weeksNext = useMemo(() => getMonthMatrix(nextMonthDate.getFullYear(), nextMonthDate.getMonth()), [thisYear, thisMonth]);
+  const today = new Date();
+  const monthA = startOfMonth(today);
+  const monthB = new Date(today.getFullYear(), today.getMonth()+1, 1);
+  const todayIso = fmtISO(today);
 
   useEffect(() => {
     (async () => {
@@ -72,78 +71,93 @@ export default function BookPage() {
         const r = await fetch('/api/slots', { cache: 'no-store' });
         const j: SlotsResponse = await r.json();
         setData(j);
-        if (!region && j.regions.length) setRegion(j.regions[0]);
+        setRegion(j.regions[0] || '');
+        setSlotIndex(0);
       } catch (e) {
         console.error('load slots failed', e);
       }
     })();
   }, []);
 
-  useEffect(() => { setSlotIndex(0); }, [region]);
-
-  const slot: SlotDef | null = useMemo(() => {
+  const currentSlot: SlotDef | null = useMemo(() => {
     const arr = data.slots[region] || [];
-    return arr.length ? arr[Math.max(0, Math.min(slotIndex, arr.length - 1))] : null;
+    return arr.length ? arr[Math.max(0, Math.min(slotIndex, arr.length-1))] : null;
   }, [data, region, slotIndex]);
 
-  const [selectedDates, setSelectedDates] = useState<Date[]>([]);
-
+  // ensure selection fits weekday; prefill first valid date
   useEffect(() => {
-    // reset selection when pkg/time/region changes
-    setSelectedDates([]);
-  }, [pkg, region, slotIndex]);
+    if (!currentSlot) return;
+    const first = nextOnWeekday(todayIso, currentSlot.weekday);
+    if (packageType === 'package4') {
+      setSelectedDates([first, addDays(first,7), addDays(first,14), addDays(first,21)]);
+    } else {
+      setSelectedDates([first]);
+    }
+  }, [region, slotIndex, packageType, currentSlot?.weekday]); // eslint-disable-line
 
-  function isAllowed(d: Date | null) {
-    if (!d || !slot) return false;
-    // allowed if matches weekday and date >= today
-    const isFutureOrToday = d >= new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return d.getDay() === slot.weekday && isFutureOrToday;
+  function isAllowed(iso: string): boolean {
+    if (!currentSlot) return false;
+    const d = parseISO(iso);
+    return d.getDay() === currentSlot.weekday && iso >= todayIso;
   }
 
-  function onPick(d: Date) {
-    if (!slot) return;
-    const first = new Date(d.getFullYear(), d.getMonth(), d.getDate()); // strip time
-    if (pkg === 'baseline') {
-      setSelectedDates([first]);
+  function toggleDate(iso: string) {
+    if (!isAllowed(iso)) return;
+    if (packageType === 'baseline') {
+      setSelectedDates([iso]);
     } else {
-      // package of 4 weekly sessions: first + 7 + 14 + 21 days
-      setSelectedDates([first, addDays(first, 7), addDays(first, 14), addDays(first, 21)]);
+      // package of 4: base date + 3 weekly
+      const base = iso;
+      setSelectedDates([base, addDays(base,7), addDays(base,14), addDays(base,21)]);
     }
   }
 
+  const canContinue = !!currentSlot
+    && consentOK
+    && consentName.trim().length > 1
+    && clientName.trim().length > 1
+    && yourEmail.trim().length > 3;
+
   async function handleContinue() {
-    if (!slot || !selectedDates.length || !consentOK || processing) return;
+    if (!canContinue || !currentSlot || selectedDates.length === 0) return;
     setProcessing(true);
     try {
-      const first = selectedDates[0];
-      const dateISO = fmtISODate(first);
-      const slotStr = `${dateISO} ${slot.start}–${slot.end}`;
-      // best-effort consent
+      // best-effort consent save
       await fetch('/api/consent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           bid: null,
-          consent: { accepted: true, name: consentName, consentVersion: '2025-08-24', signatureDataUrl: null }
+          consent: {
+            accepted: true,
+            name: consentName,
+            consentVersion: '2025-08-24',
+            signatureDataUrl: null,
+          }
         })
       });
+
+      const firstDate = selectedDates[0];
+      const legacySlot = `${firstDate} ${currentSlot.start}–${currentSlot.end}`;
+
       const res = await fetch('/api/book', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: clientName,
           email: yourEmail,
           region,
-          slot: slotStr,
-          venue: slot.venueAddress || '',
+          slot: legacySlot,
+          venue: currentSlot.venueAddress || '',
           referringName: medName || '',
           consentAccepted: true,
-          dateISO,
-          start: slot.start, end: slot.end,
-          venueAddress: slot.venueAddress || '',
+          dateISO: firstDate,
+          start: currentSlot.start,
+          end: currentSlot.end,
+          venueAddress: currentSlot.venueAddress || '',
           medicalEmail: medEmail || null,
-          packageType: pkg,
-          allDates: selectedDates.map(fmtISODate),
+          packageType,
+          allDates: selectedDates,
         })
       });
       const j = await res.json();
@@ -153,36 +167,53 @@ export default function BookPage() {
       else { alert('Could not start payment (no redirectUrl)'); setProcessing(false); }
     } catch (e) {
       console.error(e);
-      alert('There was an error. Please try again.');
+      alert('There was an error starting payment. Please try again.');
       setProcessing(false);
     }
   }
 
-  function MonthGrid({ weeks, title }:{weeks:(Date|null)[][], title:string}) {
+  function MonthGrid({ date }: { date: Date }) {
+    const first = startOfMonth(date);
+    const firstWd = first.getDay(); // 0..6
+    const dim = daysInMonth(date);
+    const year = date.getFullYear();
+    const month = date.getMonth(); // 0-based
+
+    const cells: (string | null)[] = [];
+    for (let i=0;i<firstWd;i++) cells.push(null);
+    for (let day=1; day<=dim; day++) {
+      const iso = fmtISO(new Date(year, month, day));
+      cells.push(iso);
+    }
+    // Pad to 6 rows of 7
+    while (cells.length % 7 !== 0) cells.push(null);
+    while (cells.length < 42) cells.push(null);
+
     return (
-      <div className="w-full md:w-[420px]">
-        <div className="text-lg font-semibold mb-2">{title}</div>
-        <div className="grid grid-cols-7 gap-1 text-center text-xs text-gray-600 mb-1">
-          {WEEKDAYS.map(w => <div key={w} className="py-1">{w}</div>)}
+      <div className="w-full">
+        <div className="text-lg font-semibold mb-2">{monthName(date)}</div>
+        <div className="grid grid-cols-7 gap-1 text-sm font-medium text-gray-600 mb-1">
+          {WEEKDAY_LABELS.map((d) => <div key={d} className="text-center py-1">{d}</div>)}
         </div>
         <div className="grid grid-cols-7 gap-1">
-          {weeks.flat().map((d, i) => {
-            const isBlank = !d;
-            const allowed = isAllowed(d!);
-            const sel = !!d && selectedDates.some(s => s.getTime() === new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime());
+          {cells.map((iso, idx) => {
+            if (!iso) return <div key={idx} className="h-10 border rounded-xl bg-transparent" />;
+            const allowed = isAllowed(iso);
+            const selected = selectedDates.includes(iso);
+            const baseCell = "h-10 flex items-center justify-center rounded-xl border";
+            const styles = allowed
+              ? (selected ? " bg-black text-white border-black" : " hover:bg-gray-100 cursor-pointer")
+              : " bg-gray-100 text-gray-400";
             return (
               <button
-                key={i}
-                disabled={isBlank || !allowed}
-                onClick={() => d && onPick(d)}
-                className={[
-                  "aspect-square rounded-md border text-sm",
-                  isBlank ? "bg-transparent border-transparent cursor-default" :
-                  allowed ? (sel ? "bg-black text-white border-black" : "hover:bg-gray-100") :
-                  "bg-gray-100 text-gray-400 cursor-not-allowed"
-                ].join(' ')}
+                key={iso}
+                type="button"
+                disabled={!allowed}
+                className={`${baseCell} ${styles}`}
+                onClick={() => toggleDate(iso)}
+                aria-pressed={selected}
               >
-                {d ? d.getDate() : ""}
+                {parseISO(iso).getDate()}
               </button>
             );
           })}
@@ -191,56 +222,67 @@ export default function BookPage() {
     );
   }
 
-  const canContinue = !!slot && !!selectedDates.length && consentOK && consentName.trim().length>1 && clientName.trim().length>1 && yourEmail.trim().length>3;
+  const timesForRegion = data.slots[region] || [];
 
   return (
-    <main className="max-w-5xl mx-auto px-6 py-8">
-      <div className="text-xs text-gray-500 mb-2">build: app/book/page.tsx • calendar-grid-final • 2025‑08‑24</div>
-      <h1 className="text-3xl font-bold mb-6">Book a Good2Go Assessment</h1>
+    <main className="max-w-4xl mx-auto px-4 py-8">
+      <div className="text-xs text-gray-500 mb-2">build: app/book/page.tsx • calendar-2mo-responsive • 2025‑08‑24</div>
+      <h1 className="text-3xl font-bold mb-4">Book a Good2Go Assessment</h1>
 
-      {/* Package options */}
-      <div className="flex items-center gap-6 mb-4">
+      {/* Product options */}
+      <div className="mb-4 flex items-center gap-6">
         <label className="inline-flex items-center gap-2">
-          <input type="radio" name="pkg" value="baseline" checked={pkg==='baseline'} onChange={()=>setPkg('baseline')} />
+          <input type="radio" name="pkg" checked={packageType==='baseline'} onChange={()=>setPackageType('baseline')} />
           <span>Baseline — <span className="font-semibold">$65</span></span>
         </label>
         <label className="inline-flex items-center gap-2">
-          <input type="radio" name="pkg" value="package4" checked={pkg==='package4'} onChange={()=>setPkg('package4')} />
+          <input type="radio" name="pkg" checked={packageType==='package4'} onChange={()=>setPackageType('package4')} />
           <span>Package (4 weekly sessions) — <span className="font-semibold">$199</span></span>
         </label>
       </div>
 
       {/* Region & Time */}
-      <div className="flex flex-wrap gap-6 mb-4">
+      <div className="flex flex-wrap items-end gap-4 mb-4">
         <div>
           <label className="block text-sm font-medium mb-1">Region</label>
-          <select className="border rounded-xl px-3 py-2 min-w-[220px]" value={region} onChange={e=>setRegion(e.target.value)}>
+          <select
+            value={region}
+            onChange={(e)=>{ setRegion(e.target.value); setSlotIndex(0); }}
+            className="border rounded-xl px-3 py-2 min-w-[200px]"
+          >
             {data.regions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-sm font-medium mb-1">Time</label>
-          <select className="border rounded-xl px-3 py-2 min-w-[220px]" value={String(slotIndex)} onChange={e=>setSlotIndex(Number(e.target.value))}>
-            {(data.slots[region]||[]).map((s, i) => <option key={i} value={i}>{s.start}–{s.end}</option>)}
+          <select
+            value={String(slotIndex)}
+            onChange={(e)=>setSlotIndex(Number(e.target.value))}
+            className="border rounded-xl px-3 py-2 min-w-[180px]"
+            disabled={!timesForRegion.length}
+          >
+            {timesForRegion.map((s, i) => <option key={i} value={i}>{s.start}–{s.end}</option>)}
           </select>
         </div>
       </div>
 
-      {/* Two month calendar */}
-      <div className="flex flex-col md:flex-row gap-8 mb-4">
-        <MonthGrid weeks={weeksThis} title={now.toLocaleString(undefined,{month:'long', year:'numeric'})} />
-        <MonthGrid weeks={weeksNext} title={nextMonthDate.toLocaleString(undefined,{month:'long', year:'numeric'})} />
+      {/* Calendars */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+        <MonthGrid date={monthA} />
+        <MonthGrid date={monthB} />
       </div>
 
-      {/* Selected summary */}
-      {selectedDates.length>0 && (
-        <div className="text-sm text-gray-700 mb-6">
-          Selected {pkg==='baseline' ? 'date' : 'dates'}: {selectedDates.map(d=>d.toLocaleDateString()).join(', ')}
-        </div>
-      )}
+      {/* Selected dates preview */}
+      <div className="mb-6 text-sm">
+        {packageType==='package4' ? (
+          <div>Selected dates (4 weekly): {selectedDates.join(', ')}</div>
+        ) : (
+          <div>Selected date: {selectedDates[0]}</div>
+        )}
+      </div>
 
-      {/* Client & emails */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+      {/* Client + emails */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block mb-1 font-medium">Client Name</label>
           <input className="border rounded-xl px-3 py-2 w-full" value={clientName} onChange={e=>setClientName(e.target.value)} />
@@ -259,7 +301,7 @@ export default function BookPage() {
         </div>
       </div>
 
-      {/* Consent short form */}
+      {/* Consent block summary */}
       <section className="mt-8 p-5 border rounded-2xl bg-white">
         <h3 className="text-lg font-semibold mb-2">Consent &amp; Disclosure</h3>
         <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1">
@@ -271,18 +313,21 @@ export default function BookPage() {
           Read the full agreement at <a href="/consent" className="underline">/consent</a>. Version: 2025‑08‑24
         </p>
         <label className="flex items-start gap-3 mt-4">
-          <input type="checkbox" className="mt-1 h-4 w-4" checked={consentOK} onChange={e=>setConsentOK(e.target.checked)} />
+          <input type="checkbox" className="mt-1 h-4 w-4" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} />
           <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
         </label>
         <div className="mt-3 max-w-sm">
           <label className="block text-sm font-medium">Full Name (type to sign)</label>
-          <input className="mt-1 w-full rounded-xl border px-3 py-2" value={consentName} onChange={e=>setConsentName(e.target.value)} placeholder="Your full legal name" />
+          <input className="mt-1 w-full rounded-xl border px-3 py-2" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
         </div>
       </section>
 
       <div className="mt-6 flex gap-3">
-        <button onClick={handleContinue} disabled={!canContinue || processing}
-          className={`px-4 py-2 rounded-xl text-white ${canContinue ? 'bg-black' : 'bg-gray-400 cursor-not-allowed'}`}>
+        <button
+          onClick={handleContinue}
+          disabled={!canContinue || processing}
+          className={`px-4 py-2 rounded-xl text-white ${canContinue ? 'bg-black' : 'bg-gray-400 cursor-not-allowed'}`}
+        >
           {processing ? 'Processing…' : 'Continue to Payment'}
         </button>
         <a className="px-4 py-2 rounded-xl border" href="/">Cancel</a>
