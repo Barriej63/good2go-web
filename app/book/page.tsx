@@ -1,189 +1,147 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
 
-type SlotsResp = {
-  regions: string[];
-  slots: Record<string, { weekday: number; start: string; end: string; venueAddress?: string; note?: string }[]>;
-};
+type SlotDef = { weekday: number; start: string; end: string; venueAddress?: string; note?: string; };
+type SlotsResp = { regions: string[]; slots: Record<string, SlotDef[]> };
 
-const TAG = 'build: app/book/page.tsx • consent + region/slot + med email';
-
-function nextDatesForWeekday(weekday: number, count = 10): string[] {
-  const out: string[] = [];
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let add = (weekday - d.getDay() + 7) % 7;
-  if (add === 0) add = 7; // next occurrence
-  d.setDate(d.getDate() + add);
+function nextMatchingDates(weekday: number, count = 10): string[] {
+  const dates: string[] = [];
+  const today = new Date();
+  const day = today.getDay();
+  let delta = (weekday - day + 7) % 7;
+  if (delta === 0) delta = 7; // next week if today
+  const first = new Date(today.getFullYear(), today.getMonth(), today.getDate() + delta);
   for (let i=0;i<count;i++) {
-    out.push(d.toISOString().slice(0,10));
-    d.setDate(d.getDate() + 7);
+    const d = new Date(first.getFullYear(), first.getMonth(), first.getDate() + i*7);
+    const iso = d.toISOString().slice(0,10);
+    dates.push(iso);
   }
-  return out;
+  return dates;
 }
 
 export default function BookPage() {
-  const [cfg, setCfg] = useState<SlotsResp | null>(null);
-  const [region, setRegion] = useState('');
-  const [dateISO, setDateISO] = useState('');
-  const [slotIdx, setSlotIdx] = useState(0);
-
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [medEmail, setMedEmail] = useState(''); // optional
-
-  const [accepted, setAccepted] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<SlotsResp>({ regions: [], slots: {} });
+  const [region, setRegion] = useState<string>('');
+  const [dateISO, setDateISO] = useState<string>('');
+  const [timeIdx, setTimeIdx] = useState<number>(0);
+  const [email, setEmail] = useState<string>('');
+  const [name, setName] = useState<string>('');
+  const [medicalEmail, setMedicalEmail] = useState<string>('');
+  const [accepted, setAccepted] = useState<boolean>(false);
+  const canContinue = accepted && name.trim().length >= 2 && email.includes('@');
 
   useEffect(() => {
-    fetch('/api/slots').then(r => r.json()).then(setCfg).catch(console.error);
+    (async () => {
+      try {
+        const r = await fetch('/api/slots', { cache: 'no-store' });
+        const j = await r.json();
+        setData(j);
+        const firstRegion = j.regions[0] || '';
+        setRegion(firstRegion);
+      } catch (e) { console.error(e); }
+    })();
   }, []);
 
-  useEffect(() => {
-    if (!cfg) return;
-    const r0 = region || cfg.regions[0] || '';
-    if (!region && r0) setRegion(r0);
-  }, [cfg]);
-
-  const regionSlots = useMemo(() => {
-    return region && cfg ? (cfg.slots[region] || []) : [];
-  }, [cfg, region]);
-
-  const dateOptions = useMemo(() => {
+  const regionSlots: SlotDef[] = useMemo(() => data.slots[region] || [], [data, region]);
+  const dateOptions: string[] = useMemo(() => {
     if (!regionSlots.length) return [];
-    return nextDatesForWeekday(regionSlots[slotIdx]?.weekday ?? 1, 10);
-  }, [regionSlots, slotIdx]);
+    return nextMatchingDates(regionSlots[0].weekday, 10);
+  }, [regionSlots]);
+
+  const timeOptions = regionSlots.map((s, i) => ({ label: `${s.start}–${s.end}`, idx: i }));
 
   useEffect(() => {
     if (dateOptions.length && !dateISO) setDateISO(dateOptions[0]);
-  }, [dateOptions]);
+  }, [dateOptions, dateISO]);
 
-  const canContinue = accepted && fullName.trim().length >= 2 && email.includes('@') && region && dateISO && regionSlots.length>0;
-
-  async function handleContinue() {
-    if (!canContinue || loading) return;
-    setLoading(true);
-
-    // Save consent best-effort
-    try {
-      await fetch('/api/consent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bid: null, consent: { accepted: true, name: fullName, consentVersion: '2025-08-23' } })
-      });
-    } catch {}
-
-    // Build payload compatible with your /api/book today + new fields
-    const slot = regionSlots[slotIdx];
+  async function onContinue() {
+    if (!canContinue) return;
+    const chosen = regionSlots[timeIdx];
+    const slotLabel = `${dateISO} ${chosen?.start ?? ''}–${chosen?.end ?? ''}`;
     const payload = {
-      name: fullName,
-      email,
-      region,
-      slot: `${dateISO} ${slot?.start}-${slot?.end}`,
-      venue: slot?.venueAddress || '',
-      referringName: '', // optional future field
+      name, email, region,
+      slot: slotLabel,
+      venue: chosen?.venueAddress || '',
+      referringName: '',
       consentAccepted: true,
-      // new fields for success/receipt display
-      dateISO,
-      start: slot?.start,
-      end: slot?.end,
-      venueAddress: slot?.venueAddress || '',
-      medicalEmail: medEmail || null,
+      dateISO, start: chosen?.start, end: chosen?.end,
+      venueAddress: chosen?.venueAddress || '',
+      medicalEmail: medicalEmail || null
     };
-
     try {
-      const r = await fetch('/api/book', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await r.json();
-      const redirectUrl = data?.redirectUrl || data?.paymentUrl || data?.url;
-      if (redirectUrl) {
-        window.location.href = redirectUrl;
-        return;
-      }
-      if (data?.bookingRef) {
-        // TEMP fallback: go to success showing details if server didn't return payment URL
-        window.location.href = `/success?ref=${encodeURIComponent(data.bookingRef)}`;
-        return;
-      }
+      // best-effort consent persistence
+      await fetch('/api/consent', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ bid: null, consent: { accepted: true, name, consentVersion: '2025-08-23' } }) });
+    } catch {}
+    const res = await fetch('/api/book', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const j = await res.json();
+    const redirectUrl = j.redirectUrl || j.paymentUrl || j.url;
+    if (!redirectUrl) {
       alert('Could not start payment (no redirectUrl)');
-    } catch (e:any) {
-      alert('Could not start payment (network error)');
-    } finally {
-      setLoading(false);
+      return;
     }
+    window.location.href = redirectUrl;
   }
+
+  const chosen = regionSlots[timeIdx];
 
   return (
     <main className="px-6 py-10 max-w-3xl mx-auto">
-      <div className="text-xs text-gray-500 mb-2">{TAG}</div>
+      <div className="text-sm text-gray-500 mb-2">build: app/book/page.tsx • consent + region/date/time</div>
       <h1 className="text-3xl font-bold mb-4">Book a Good2Go Assessment</h1>
 
-      <div className="grid gap-4 mb-6 md:grid-cols-2">
-        <div>
-          <label className="block text-sm font-medium">Region</label>
-          <select className="mt-1 w-full rounded-xl border px-3 py-2" value={region} onChange={e=>{setRegion(e.target.value); setSlotIdx(0);}}>
-            {(cfg?.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
+      <div className="grid gap-4 mb-6">
+        <label className="block">
+          <div>Region</div>
+          <select className="border rounded px-2 py-1" value={region} onChange={e => setRegion(e.target.value)}>
+            {data.regions.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium">Time</label>
-          <select className="mt-1 w-full rounded-xl border px-3 py-2" value={slotIdx} onChange={e=>setSlotIdx(Number(e.target.value))}>
-            {regionSlots.map((s, i) => <option key={i} value={i}>{s.start}–{s.end}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium">Date</label>
-          <select className="mt-1 w-full rounded-xl border px-3 py-2" value={dateISO} onChange={e=>setDateISO(e.target.value)}>
-            {dateOptions.map(d => {
-              const dd = new Date(d);
-              return <option key={d} value={d}>{dd.toLocaleDateString()}</option>;
-            })}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium">Your Email</label>
-          <input className="mt-1 w-full rounded-xl border px-3 py-2" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" />
-        </div>
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium">Medical Professional’s Email (optional)</label>
-          <input className="mt-1 w-full rounded-xl border px-3 py-2" value={medEmail} onChange={e=>setMedEmail(e.target.value)} placeholder="doctor@clinic.nz" />
-        </div>
-      </div>
-
-      <section className="mt-6 p-5 border rounded-2xl bg-white">
-        <h3 className="text-lg font-semibold mb-2">Consent & Disclosure</h3>
-        <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1">
-          <li>I consent to Good2Go sharing relevant assessment results with my nominated referring medical professional for the purpose of ongoing care.</li>
-          <li>I understand I can revoke consent at any time in writing, except where action has already been taken based on this consent.</li>
-          <li>I acknowledge Good2Go is a clinical decision support (CDS) tool, not a diagnostic instrument.</li>
-        </ul>
-        <p className="text-sm text-gray-600 mt-2">Read the full agreement at <a className="underline" href="/consent">/consent</a>. Version: 2025-08-23</p>
-
-        <label className="flex items-start gap-3 mt-4">
-          <input type="checkbox" className="mt-1 h-4 w-4" checked={accepted} onChange={e=>setAccepted(e.target.checked)} />
-          <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
         </label>
 
-        <div className="mt-4 max-w-sm">
-          <label className="block text-sm font-medium">Full Name (type to sign)</label>
-          <input className="mt-1 w-full rounded-xl border px-3 py-2" value={fullName} onChange={e=>setFullName(e.target.value)} placeholder="Your full legal name" />
-        </div>
-      </section>
+        <label className="block">
+          <div>Date</div>
+          <select className="border rounded px-2 py-1" value={dateISO} onChange={e => setDateISO(e.target.value)}>
+            {dateOptions.map(d => <option key={d} value={d}>{new Date(d).toLocaleDateString()}</option>)}
+          </select>
+        </label>
 
-      <div className="mt-6 flex gap-3">
-        <button
-          onClick={handleContinue}
-          disabled={!canContinue || loading}
-          className={`px-4 py-2 rounded-xl text-white ${canContinue ? 'bg-black' : 'bg-gray-400 cursor-not-allowed'}`}
-        >
-          {loading ? 'Processing…' : 'Continue to Payment'}
-        </button>
-        <a className="px-4 py-2 rounded-xl border" href="/">Cancel</a>
+        <label className="block">
+          <div>Time</div>
+          <select className="border rounded px-2 py-1" value={timeIdx} onChange={e => setTimeIdx(parseInt(e.target.value))}>
+            {timeOptions.map(o => <option key={o.idx} value={o.idx}>{o.label}</option>)}
+          </select>
+        </label>
+
+        <label className="block">
+          <div>Your Email</div>
+          <input className="border rounded px-2 py-1 w-full" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} />
+        </label>
+
+        <label className="block">
+          <div>Medical Professional’s Email (optional)</div>
+          <input className="border rounded px-2 py-1 w-full" placeholder="doctor@clinic.nz" value={medicalEmail} onChange={e => setMedicalEmail(e.target.value)} />
+        </label>
+
+        <label className="block">
+          <div>Full Name (type to sign)</div>
+          <input className="border rounded px-2 py-1 w-full" placeholder="Your full legal name" value={name} onChange={e => setName(e.target.value)} />
+        </label>
+
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} />
+          <span>I have read and agree to the Consent and Disclaimer Agreement (<a href="/consent" className="underline">view</a>).</span>
+        </label>
       </div>
-      {!canContinue && <p className="text-sm text-red-600 mt-2">Please complete region/date/time, enter your email, tick consent, and type your full name.</p>}
+
+      {chosen?.venueAddress && (
+        <div className="text-sm text-gray-700 mb-4">
+          <strong>Venue:</strong> {chosen.venueAddress}
+        </div>
+      )}
+
+      <button disabled={!canContinue} onClick={onContinue}
+        className={`px-4 py-2 rounded-xl text-white ${canContinue ? 'bg-black' : 'bg-gray-400 cursor-not-allowed'}`}>
+        Continue to Payment
+      </button>
     </main>
   );
 }

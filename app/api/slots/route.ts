@@ -3,45 +3,27 @@ import { getAdminDb } from '@/lib/firebaseAdmin';
 
 export const dynamic = 'force-dynamic';
 
-type SlotDoc = {
-  slots?: Array<{
-    weekday?: string | number;
-    start?: string;
-    end?: string;
-    venueAddress?: string;
-    note?: string;
-  }>;
-  weekday?: string | number;
-  start?: string;
-  end?: string;
-  venueAddress?: string;
-  note?: string;
-};
-
 type SlotDef = {
-  weekday: number;
-  start: string;
-  end: string;
+  weekday: number;        // 0=Sun..6=Sat
+  start: string;          // 'HH:mm'
+  end: string;            // 'HH:mm'
   venueAddress?: string;
   note?: string;
 };
 
-const WEEKDAYS: Record<string, number> = {
-  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6
-};
-
-function toWeekday(v: string | number | undefined): number | null {
-  if (typeof v === 'number') return Math.max(0, Math.min(6, v));
-  if (!v) return null;
-  const n = v.toLowerCase();
-  if (n in WEEKDAYS) return WEEKDAYS[n];
-  const num = Number(v);
-  return Number.isFinite(num) ? Math.max(0, Math.min(6, num)) : null;
+function weekdayToNum(w: string | number): number | null {
+  if (typeof w === 'number') return Math.max(0, Math.min(6, w));
+  const map: Record<string, number> = {
+    sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6
+  };
+  const key = String(w).trim().toLowerCase();
+  return key in map ? map[key] : null;
 }
 
 export async function GET() {
   const db = getAdminDb();
   const snap = await db.collection('config').get();
+
   const regions: string[] = [];
   const slots: Record<string, SlotDef[]> = {};
 
@@ -52,21 +34,22 @@ export async function GET() {
     const region = m[1].replace(/_/g, ' ');
     regions.push(region);
 
-    const data = doc.data() as SlotDoc;
-    const list: SlotDef[] = [];
+    const data = doc.data() || {};
+    const arr: SlotDef[] = [];
 
-    const pushSlot = (s: any) => {
-      const wd = toWeekday(s?.weekday);
-      if (wd == null || !s?.start || !s?.end) return;
-      list.push({ weekday: wd, start: s.start, end: s.end, venueAddress: s.venueAddress, note: s.note });
-    };
-
-    if (Array.isArray(data.slots) && data.slots.length) {
-      data.slots.forEach(pushSlot);
+    if (Array.isArray(data.slots)) {
+      for (const s of data.slots) {
+        const wd = weekdayToNum(s.weekday);
+        if (wd == null || !s.start || !s.end) continue;
+        arr.push({ weekday: wd, start: s.start, end: s.end, venueAddress: s.venueAddress || data.venueAddress, note: s.note || data.note });
+      }
     } else {
-      pushSlot(data);
+      const wd = weekdayToNum(data.weekday);
+      if (wd != null && data.start && data.end) {
+        arr.push({ weekday: wd, start: data.start, end: data.end, venueAddress: data.venueAddress, note: data.note });
+      }
     }
-    slots[region] = list;
+    slots[region] = arr;
   });
 
   return NextResponse.json({ regions, slots });
