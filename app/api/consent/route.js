@@ -8,7 +8,6 @@ export async function POST(req) {
     if (!consent || typeof consent !== 'object') {
       return NextResponse.json({ error: 'Missing consent' }, { status: 400 });
     }
-
     const db = getAdminDb();
     const payload = {
       consentAccepted: !!consent.accepted,
@@ -17,17 +16,13 @@ export async function POST(req) {
       consentVersion: consent.consentVersion || null,
       consentAt: new Date().toISOString(),
     };
-
     if (bid) {
       const snap = await db.collection('bookings').where('bid', '==', bid).limit(1).get();
       if (!snap.empty) {
-        const docRef = snap.docs[0].ref;
-        await docRef.set(payload, { merge: true });
+        await snap.docs[0].ref.set(payload, { merge: true });
         return NextResponse.json({ ok: true, attachedTo: 'booking', bid });
       }
     }
-
-    // Fallback: store standalone consent entry if booking isn't created yet
     const ref = await db.collection('standalone_consents').add(payload);
     return NextResponse.json({ ok: true, attachedTo: 'standalone', id: ref.id });
   } catch (err) {

@@ -45,9 +45,7 @@ export default function ConsentBlock({ onChange, initial = {} }) {
       setDrawing(false);
       setSigDataUrl(canvas.toDataURL('image/png'));
     }
-    function onResize() {
-      rect = canvas.getBoundingClientRect();
-    }
+    function onResize() { rect = canvas.getBoundingClientRect(); }
 
     canvas.addEventListener('mousedown', onDown);
     canvas.addEventListener('mousemove', onMove);
