@@ -1,81 +1,100 @@
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebaseAdmin';
-import { weekdayToNumber } from '@/lib/weekdays';
+import { toWeekdayNumber } from '@/lib/weekdays';
 
 export const dynamic = 'force-dynamic';
 
-function requireKey(req: Request) {
-  const key = process.env.ADMIN_KEY;
-  const hdr = (req.headers.get('x-admin-key') || '').trim();
-  if (!key || hdr !== key) {
-    throw new Error('unauthorized');
-  }
+function auth(req: Request) {
+  const hdr = (req.headers.get('x-admin-token') || '').trim();
+  const token = process.env.ADMIN_TOKEN || '';
+  return token && hdr && hdr === token;
+}
+
+function docIdForRegion(region: string) {
+  return 'timeslots_' + region;
 }
 
 export async function GET(req: Request) {
-  try {
-    requireKey(req);
-    const db = getAdminDb();
-    const col = db.collection('config');
-    const snap = await col.get();
-    const docs: any[] = [];
-    snap.forEach((d: any) => docs.push({ id: d.id, data: d.data() }));
-    return NextResponse.json({ ok: true, docs });
-  } catch (e:any) {
-    const status = e.message === 'unauthorized' ? 401 : 500;
-    return NextResponse.json({ ok: false, error: e.message }, { status });
-  }
+  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const db = getAdminDb();
+  const snap = await db.collection('config').get();
+  const out: any[] = [];
+  snap.forEach(d => {
+    if (!/^timeslots[_-]/i.test(d.id)) return;
+    out.push({ id: d.id, data: d.data() });
+  });
+  return NextResponse.json({ ok: true, docs: out });
 }
 
 export async function POST(req: Request) {
-  try {
-    requireKey(req);
-    const body = await req.json();
-    const { region, slot } = body || {};
-    if (!region || !slot) return NextResponse.json({ ok:false, error:'missing region/slot' }, { status:400 });
+  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const body = await req.json();
+  const { region, weekday, start, end, venueAddress = '', note = '' } = body || {};
+  const wd = toWeekdayNumber(weekday);
+  if (!region || wd===null || !start || !end) return NextResponse.json({ error: 'invalid_payload' }, { status: 400 });
 
-    const db = getAdminDb();
-    const docId = `timeslots_${region}`;
-    const ref = db.collection('config').doc(docId);
-    const snap = await ref.get();
-    const existing = snap.exists ? snap.data() : {};
+  const db = getAdminDb();
+  const ref = db.collection('config').doc(docIdForRegion(region));
+  const doc = await ref.get();
 
-    const arr = Array.isArray(existing.slots) ? existing.slots : [];
-    arr.push({
-      weekday: slot.weekday,
-      start: slot.start,
-      end: slot.end,
-      venueAddress: slot.venueAddress || '',
-      note: slot.note || '',
-    });
-    await ref.set({ ...existing, slots: arr }, { merge: true });
-    return NextResponse.json({ ok: true });
-  } catch (e:any) {
-    const status = e.message === 'unauthorized' ? 401 : 500;
-    return NextResponse.json({ ok:false, error:e.message }, { status });
+  let slots: any[] = [];
+  if (doc.exists) {
+    const data = doc.data() || {};
+    if (Array.isArray(data.slots)) slots = data.slots;
+    else if (data.start && data.end && (data.weekday || data.weekdays)) {
+      const wdTop = toWeekdayNumber(data.weekday ?? data.weekdays);
+      if (wdTop !== null) slots.push({ weekday: wdTop, start: data.start, end: data.end, venueAddress: data.venueAddress || '', note: data.note || '' });
+    }
   }
+  slots.push({ weekday: wd, start, end, venueAddress, note });
+  await ref.set({ slots }, { merge: true });
+  return NextResponse.json({ ok: true, count: slots.length });
+}
+
+export async function PATCH(req: Request) {
+  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const body = await req.json();
+  const { region, index, venueAddress, note } = body || {};
+  if (!region || typeof index !== 'number') return NextResponse.json({ error: 'invalid_payload' }, { status: 400 });
+
+  const db = getAdminDb();
+  const ref = db.collection('config').doc(docIdForRegion(region));
+  const doc = await ref.get();
+  if (!doc.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const data = doc.data() || {};
+  let slots: any[] = [];
+  if (Array.isArray(data.slots)) slots = data.slots;
+  else if (data.start && data.end && (data.weekday || data.weekdays)) {
+    const wdTop = toWeekdayNumber(data.weekday ?? data.weekdays);
+    if (wdTop !== null) slots.push({ weekday: wdTop, start: data.start, end: data.end, venueAddress: data.venueAddress || '', note: data.note || '' });
+  }
+  if (index < 0 || index >= slots.length) return NextResponse.json({ error: 'bad_index' }, { status: 400 });
+  if (typeof venueAddress === 'string') slots[index].venueAddress = venueAddress;
+  if (typeof note === 'string') slots[index].note = note;
+  await ref.set({ slots }, { merge: true });
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req: Request) {
-  try {
-    requireKey(req);
-    const { searchParams } = new URL(req.url);
-    const region = searchParams.get('region');
-    const index = Number(searchParams.get('index'));
-    if (!region || Number.isNaN(index)) return NextResponse.json({ ok:false, error:'missing region/index' }, { status:400 });
-
-    const db = getAdminDb();
-    const ref = db.collection('config').doc(`timeslots_${region}`);
-    const snap = await ref.get();
-    if (!snap.exists) return NextResponse.json({ ok:false, error:'not_found' }, { status:404 });
-    const data:any = snap.data();
-    const arr:any[] = Array.isArray(data.slots) ? data.slots : [];
-    if (index < 0 || index >= arr.length) return NextResponse.json({ ok:false, error:'bad_index' }, { status:400 });
-    arr.splice(index,1);
-    await ref.set({ ...data, slots: arr }, { merge: true });
-    return NextResponse.json({ ok:true });
-  } catch (e:any) {
-    const status = e.message === 'unauthorized' ? 401 : 500;
-    return NextResponse.json({ ok:false, error:e.message }, { status });
+  if (!auth(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  const { searchParams } = new URL(req.url);
+  const region = searchParams.get('region');
+  const indexStr = searchParams.get('index');
+  if (!region || indexStr === null) return NextResponse.json({ error: 'invalid_params' }, { status: 400 });
+  const index = parseInt(indexStr, 10);
+  const db = getAdminDb();
+  const ref = db.collection('config').doc(docIdForRegion(region));
+  const doc = await ref.get();
+  if (!doc.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  const data = doc.data() || {};
+  let slots: any[] = [];
+  if (Array.isArray(data.slots)) slots = data.slots;
+  else if (data.start && data.end && (data.weekday || data.weekdays)) {
+    const wdTop = toWeekdayNumber(data.weekday ?? data.weekdays);
+    if (wdTop !== null) slots.push({ weekday: wdTop, start: data.start, end: data.end, venueAddress: data.venueAddress || '', note: data.note || '' });
   }
+  if (isNaN(index) || index < 0 || index >= slots.length) return NextResponse.json({ error: 'bad_index' }, { status: 400 });
+  slots.splice(index, 1);
+  await ref.set({ slots }, { merge: true });
+  return NextResponse.json({ ok: true, count: slots.length });
 }
