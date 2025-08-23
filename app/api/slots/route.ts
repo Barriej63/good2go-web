@@ -1,88 +1,73 @@
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebaseAdmin';
 
-type SlotDef = {
-  weekday: number; // 0=Sun..6=Sat
-  start: string;   // "HH:mm"
-  end: string;     // "HH:mm"
+export const dynamic = 'force-dynamic';
+
+type SlotDoc = {
+  slots?: Array<{
+    weekday?: string | number;
+    start?: string;
+    end?: string;
+    venueAddress?: string;
+    note?: string;
+  }>;
+  weekday?: string | number;
+  start?: string;
+  end?: string;
   venueAddress?: string;
   note?: string;
 };
 
-const WEEKDAY_INDEX: Record<string, number> = {
-  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+type SlotDef = {
+  weekday: number;
+  start: string;
+  end: string;
+  venueAddress?: string;
+  note?: string;
 };
 
-function toWeekdayIndex(v: unknown): number | null {
-  if (typeof v === 'number') return Math.min(6, Math.max(0, v));
-  if (typeof v === 'string') {
-    const k = v.trim().toLowerCase();
-    if (k in WEEKDAY_INDEX) return WEEKDAY_INDEX[k];
-    const n = parseInt(k, 10);
-    if (!Number.isNaN(n)) return Math.min(6, Math.max(0, n));
-  }
-  return null;
+const WEEKDAYS: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6
+};
+
+function toWeekday(v: string | number | undefined): number | null {
+  if (typeof v === 'number') return Math.max(0, Math.min(6, v));
+  if (!v) return null;
+  const n = v.toLowerCase();
+  if (n in WEEKDAYS) return WEEKDAYS[n];
+  const num = Number(v);
+  return Number.isFinite(num) ? Math.max(0, Math.min(6, num)) : null;
 }
 
 export async function GET() {
   const db = getAdminDb();
   const snap = await db.collection('config').get();
-
   const regions: string[] = [];
   const slots: Record<string, SlotDef[]> = {};
 
-  // Explicitly type doc to avoid implicit any
-  snap.docs.forEach((doc: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData>) => {
-    const id = doc.id; // e.g., timeslots_Waikato
+  snap.forEach((doc: any) => {
+    const id: string = doc.id || '';
     const m = id.match(/^timeslots[_-](.+)$/i);
     if (!m) return;
-    const region = m[1].replace(/_/g, ' ').replace(/-/g, ' ');
+    const region = m[1].replace(/_/g, ' ');
     regions.push(region);
 
-    const data = doc.data() as any;
+    const data = doc.data() as SlotDoc;
     const list: SlotDef[] = [];
 
-    // Case 1: array field 'slots'
-    if (Array.isArray(data.slots)) {
-      for (const s of data.slots) {
-        const wd = toWeekdayIndex(s?.weekday);
-        if (wd === null) continue;
-        if (!s?.start || !s?.end) continue;
-        list.push({
-          weekday: wd,
-          start: String(s.start),
-          end: String(s.end),
-          venueAddress: s.venueAddress || s.venue || data.venueAddress || undefined,
-          note: s.note || data.note || undefined,
-        });
-      }
-    }
+    const pushSlot = (s: any) => {
+      const wd = toWeekday(s?.weekday);
+      if (wd == null || !s?.start || !s?.end) return;
+      list.push({ weekday: wd, start: s.start, end: s.end, venueAddress: s.venueAddress, note: s.note });
+    };
 
-    // Case 2: top-level fields
-    const wdTop = toWeekdayIndex(data.weekday);
-    if (wdTop !== null && data.start && data.end) {
-      list.push({
-        weekday: wdTop,
-        start: String(data.start),
-        end: String(data.end),
-        venueAddress: data.venueAddress || undefined,
-        note: data.note || undefined,
-      });
+    if (Array.isArray(data.slots) && data.slots.length) {
+      data.slots.forEach(pushSlot);
+    } else {
+      pushSlot(data);
     }
-
-    if (list.length > 0) slots[region] = list;
+    slots[region] = list;
   });
-
-  // fallback if none found
-  if (regions.length === 0) {
-    const def = ['Auckland', 'Waikato', 'Bay of Plenty'];
-    for (const r of def) {
-      regions.push(r);
-    }
-    slots['Auckland'] = [{ weekday: 2, start: '17:30', end: '18:30' }];
-    slots['Waikato'] = [{ weekday: 2, start: '17:30', end: '18:30', venueAddress: '' }];
-    slots['Bay of Plenty'] = [{ weekday: 4, start: '11:00', end: '12:00' }];
-  }
 
   return NextResponse.json({ regions, slots });
 }
