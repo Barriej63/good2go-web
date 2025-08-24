@@ -1,41 +1,39 @@
-export type WorldlineEnv = 'uat' | 'prod';
+export type WorldlineMode = 'uat' | 'prod' | 'production';
 
-export function worldlineBase(env: string | undefined): string {
-  const e = (env || 'uat').toLowerCase();
-  return e === 'prod'
+export function wpBase(mode: string | undefined): string {
+  const m = (mode || 'uat').toLowerCase();
+  return (m === 'prod' || m === 'production')
     ? 'https://secure.paymarkclick.co.nz'
     : 'https://uat.paymarkclick.co.nz';
 }
 
-// Convert cents to a "d.cc" string (e.g. 6500 -> "65.00")
-export function centsToAmountString(cents: number): string {
-  const n = Math.max(0, Math.round(cents || 0));
-  return (n / 100).toFixed(2);
+export function wpRequestUrl(mode: string | undefined): string {
+  return wpBase(mode) + '/api/webpayments/paymentservice/rest/WPRequest';
 }
 
-/**
- * Build minimal JSON body for WPRequest (Web Payments) endpoint.
- * This is aligned to Worldline NZ Web Payments REST docs.
- */
+// Returns a form-encoded string.
 export function buildWPRequestBody(opts: {
   username: string;
   password: string;
   accountId: string;
-  amountCents: number;
-  currency?: string;
-  merchantReference: string;
+  amountCents: number; // in cents
+  type?: 'purchase' | 'authorisation' | 'statuscheck' | 'tokenise';
+  reference?: string;
+  particular?: string;
   returnUrl: string;
-  notificationUrl?: string;
+  transactionSource?: 'INTERNET' | 'MOTO';
 }) {
-  const currency = opts.currency || 'NZD';
-  return {
-    username: opts.username,
-    password: opts.password,
-    accountId: opts.accountId,
-    amount: centsToAmountString(opts.amountCents),
-    currency,
-    merchantReference: opts.merchantReference,
-    returnUrl: opts.returnUrl,
-    notificationUrl: opts.notificationUrl || opts.returnUrl
-  };
+  const amount = (Math.max(0, Math.round(opts.amountCents)) / 100).toFixed(2);
+  const params = new URLSearchParams();
+  params.set('username', opts.username);
+  params.set('password', opts.password);
+  params.set('account_id', opts.accountId);
+  params.set('cmd', '_xclick');
+  params.set('type', opts.type || 'purchase');
+  params.set('amount', amount);
+  if (opts.reference) params.set('reference', String(opts.reference).slice(0,50));
+  if (opts.particular) params.set('particular', String(opts.particular).slice(0,50));
+  params.set('return_url', opts.returnUrl);
+  params.set('transaction_source', opts.transactionSource || 'INTERNET');
+  return params.toString();
 }
