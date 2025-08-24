@@ -27,6 +27,9 @@ export default function BookingPage() {
       const r = await fetch('/api/book', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       const data = await r.json();
       if (!r.ok || !data?.ok) throw new Error(data?.error || 'Booking failed');
+      const isPackage = selectedProduct === 'package';     // or your existing flag
+const amount = isPackage ? 19900 : 6500;             // cents (e.g. $199 vs $65)
+window.location.href = `/pay/redirect?ref=${encodeURIComponent(json.bookingRef)}&amount=${amount}`;
       const bookingRef = data.bookingRef;
       const cents = centsFor(payload.product);
       window.location.href = `/pay/redirect?ref=${encodeURIComponent(bookingRef)}&amount=${cents}`;
