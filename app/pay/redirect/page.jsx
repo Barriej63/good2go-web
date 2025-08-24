@@ -1,81 +1,126 @@
-  // Server component that renders an auto-posting HTML form to the HPP.
-  import React from 'react';
-  import { headers } from 'next/headers';
+ 'use client';
 
-  export const dynamic = 'force-dynamic';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 
-  function replaceTokens(template, ctx) {
-    return template.replace(/\{\{(.*?)\}\}/g, (_, key) => {
-      const k = String(key || '').trim();
-      return Object.prototype.hasOwnProperty.call(ctx, k) ? String(ctx[k]) : '';
-    });
-  }
+/**
+ * Env you set in Vercel:
+ *  - NEXT_PUBLIC_WP_ACTION_URL       -> e.g. https://uat.paymarkclick.co.nz/webpayments   (or prod)
+ *  - NEXT_PUBLIC_WP_MERCHANT_ID      -> e.g. 14617
+ *  - NEXT_PUBLIC_WP_CURRENCY         -> e.g. NZD
+ *  - NEXT_PUBLIC_WP_SUCCESS_URL      -> e.g. https://good2go-rth.com/success
+ *  - NEXT_PUBLIC_WP_CANCEL_URL       -> e.g. https://good2go-rth.com/cancel
+ *  - NEXT_PUBLIC_WP_ERROR_URL        -> e.g. https://good2go-rth.com/error
+ *
+ * Query params you can pass in when you navigate here:
+ *  - ref       (booking reference, required)
+ *  - amount    (integer cents, e.g. 6500 = $65.00, required)
+ *  - currency  (optional, overrides env)
+ *  - merchantId (optional, overrides env)
+ *  - success, cancel, error (optional, override env)
+ *
+ * IMPORTANT: This page performs an HTML POST to WebPayments, so we always avoid 405.
+ */
 
-  export default function Page({ searchParams }) {
-    // Extract runtime values from query
-    const bid = searchParams?.bid || '';
-    const reference = searchParams?.ref || '';
-    const amount = Number.parseInt(searchParams?.amount || '0', 10);
+export default function PayRedirect() {
+  const sp = useSearchParams();
+  const formRef = useRef(null);
+  const [ready, setReady] = useState(false);
 
-    // Determine absolute return URLs
-    const h = headers();
-    const origin = h.get('x-forwarded-proto') && h.get('x-forwarded-host')
-      ? `${h.get('x-forwarded-proto')}://${h.get('x-forwarded-host')}`
-      : '';
+  // Read from env (public)
+  const ACTION_URL   = process.env.NEXT_PUBLIC_WP_ACTION_URL || '';
+  const DEF_MID      = process.env.NEXT_PUBLIC_WP_MERCHANT_ID || '';
+  const DEF_CURR     = process.env.NEXT_PUBLIC_WP_CURRENCY || 'NZD';
+  const DEF_SUCCESS  = process.env.NEXT_PUBLIC_WP_SUCCESS_URL || '';
+  const DEF_CANCEL   = process.env.NEXT_PUBLIC_WP_CANCEL_URL || '';
+  const DEF_ERROR    = process.env.NEXT_PUBLIC_WP_ERROR_URL || '';
 
-    const successUrl = `${origin}/api/worldline/return?status=success&bid=${encodeURIComponent(bid)}&ref=${encodeURIComponent(reference)}`;
-    const failUrl    = `${origin}/api/worldline/return?status=fail&bid=${encodeURIComponent(bid)}&ref=${encodeURIComponent(reference)}`;
-    const cancelUrl  = `${origin}/api/worldline/return?status=cancel&bid=${encodeURIComponent(bid)}&ref=${encodeURIComponent(reference)}`;
+  // Values from query or default
+  const payload = useMemo(() => {
+    const ref      = sp.get('ref') || '';
+    const amount   = sp.get('amount') || '';
+    const merchant = sp.get('merchantId') || DEF_MID;
+    const currency = sp.get('currency') || DEF_CURR;
+    const success  = sp.get('success') || DEF_SUCCESS;
+    const cancel   = sp.get('cancel')  || DEF_CANCEL;
+    const error    = sp.get('error')   || DEF_ERROR;
 
-    const ctx = { bid, reference, amount, successUrl, failUrl, cancelUrl };
+    return {
+      merchantId: merchant,
+      amount,            // integer cents as required by your Click setup (e.g. 6500)
+      currency,          // NZD
+      reference: ref,    // your booking ref
+      return_url: success,   // Click will POST the result to this URL per your console setting
+      cancel_url: cancel,
+      error_url:  error,
+    };
+  }, [sp, DEF_MID, DEF_CURR, DEF_SUCCESS, DEF_CANCEL, DEF_ERROR]);
 
-    // Read envs – endpoint and JSON fields (stringified).
-    const endpoint = process.env.WORLDLINE_FORM_ENDPOINT || '';
-    let fieldsSpec = {};
-    try {
-      fieldsSpec = JSON.parse(process.env.WORLDLINE_FORM_FIELDS || '{}');
-    } catch {}
+  useEffect(() => {
+    // Only auto-submit when we have the minimum fields
+    if (!ACTION_URL || !payload.reference || !payload.amount || !payload.merchantId) {
+      setReady(false);
+      return;
+    }
+    setReady(true);
 
-    // Create hidden inputs after token replacement.
-    const inputs = Object.entries(fieldsSpec).map(([name, value]) => {
-      const v = typeof value === 'string' ? replaceTokens(value, ctx) : String(value ?? '');
-      return React.createElement('input', { key: name, type: 'hidden', name, value: v });
-    });
+    // give the browser a tick to paint, then submit the real POST
+    const t = setTimeout(() => {
+      formRef.current?.submit();
+    }, 300);
+    return () => clearTimeout(t);
+  }, [ACTION_URL, payload]);
 
-    const warnings = [];
-    if (!endpoint) warnings.push('WORLDLINE_FORM_ENDPOINT is not set.');
-    if (Object.keys(fieldsSpec).length === 0) warnings.push('WORLDLINE_FORM_FIELDS is empty – no fields to post.');
-    if (!amount) warnings.push('Amount is 0 – check booking flow for amount cents.');
+  // Fallback visible form (in case auto-submit is blocked)
+  return (
+    <div style={{maxWidth: 720, margin: '3rem auto', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica'}}>
+      <h1>Redirecting to Payment…</h1>
+      {!ACTION_URL && (
+        <p style={{color: 'crimson'}}>
+          Missing NEXT_PUBLIC_WP_ACTION_URL. Set it to your Click WebPayments URL
+          (e.g. <code>https://uat.paymarkclick.co.nz/webpayments</code>).
+        </p>
+      )}
+      {(!payload.reference || !payload.amount || !payload.merchantId) && (
+        <p style={{color: 'crimson'}}>
+          Missing required values: <code>ref</code>, <code>amount</code>, or <code>merchantId</code>.
+          These must be provided via query string or env.
+        </p>
+      )}
 
-    return (
-      <html>
-        <head>
-          <meta charSet="utf-8" />
-          <title>Redirecting to payment…</title>
-          <meta name="robots" content="noindex" />
-        </head>
-        <body style={{fontFamily:'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif', padding:'2rem'}}>
-          <h1>Redirecting to payment…</h1>
-          {warnings.length > 0 && (
-            <div style={{background:'#fff3cd', border:'1px solid #ffeeba', padding:'1rem', marginBottom:'1rem'}}>
-              <b>Config warnings</b>
-              <ul>{warnings.map((w,i)=>(<li key={i}>{w}</li>))}</ul>
-            </div>
-          )}
-          <form id="hppForm" method="post" action={endpoint}>
-            {inputs}
-            {/* Fallback visible fields for quick debugging */}
-            <noscript>
-              <p>JavaScript is disabled. Click the button below to continue.</p>
-              <button type="submit">Continue to Payment</button>
-            </noscript>
-          </form>
-          <script dangerouslySetInnerHTML={{__html:`setTimeout(function(){var f=document.getElementById('hppForm'); if(f){f.submit();}}, 50);`}}/>
-          <p>If you are not redirected automatically, <button onClick="document.getElementById('hppForm').submit()">click here</button>.</p>
-          <pre style={{background:'#f6f8fa', padding:'12px', borderRadius:'8px', overflow:'auto'}}>
-{JSON.stringify({ endpoint, ctx, fields: fieldsSpec }, null, 2)}
-          </pre>
-        </body>
-      </html>
-    );
-  }
+      <form ref={formRef} method="post" action={ACTION_URL} style={{display:'grid', gap:'0.5rem'}}>
+        {Object.entries(payload).map(([k, v]) => (
+          <div key={k}>
+            <input type="hidden" name={k} value={v} />
+          </div>
+        ))}
+
+        {/* Debug table so you can see exactly what will be posted */}
+        <table style={{borderCollapse:'collapse', width:'100%', marginTop:'1rem'}}>
+          <thead>
+            <tr><th style={th}>Field</th><th style={th}>Value</th></tr>
+          </thead>
+          <tbody>
+            {Object.entries(payload).map(([k, v]) => (
+              <tr key={k}>
+                <td style={td}><code>{k}</code></td>
+                <td style={td}><code>{String(v)}</code></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div style={{marginTop:'1rem'}}>
+          <button type="submit" style={btn}>Pay Now</button>
+          {!ready && <p style={{marginTop:'0.5rem'}}>Fix the red items above, then click <b>Pay Now</b>.</p>}
+          {ready && <p>Posting to: <code>{ACTION_URL}</code> …</p>}
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const th = {textAlign:'left', borderBottom:'1px solid #ddd', padding:'8px', background:'#fafafa'};
+const td = {borderBottom:'1px solid #eee', padding:'8px'};
+const btn = {padding:'10px 16px', borderRadius:8, border:'1px solid #ccc', background:'#111', color:'#fff'};
+
