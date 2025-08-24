@@ -12,23 +12,30 @@ function genRef(prefix = 'G2G') {
   return `${prefix}-${stamp}-${rand}`;
 }
 
+// Simple health probe (GET /api/book)
 export async function GET(req) {
   try {
     const db = getAdminDb();
     await db.listCollections();
-    return NextResponse.json({ ok: true, env: process.env.NODE_ENV || 'unknown', admin: 'ready' });
+    return NextResponse.json({
+      ok: true,
+      admin: 'ready',
+      env: process.env.NODE_ENV || 'unknown',
+    });
   } catch (e) {
     console.error('GET /api/book health error:', e);
     return NextResponse.json({ ok: false, error: 'admin_init_failed' }, { status: 500 });
   }
 }
 
+// Create booking (POST /api/book)
 export async function POST(req) {
   const origin = new URL(req.url).origin;
 
   try {
     const body = await req.json();
 
+    // Validate required fields coming from the booking form
     const required = ['name','email','region','slot','referringName','consentAccepted'];
     for (const k of required) {
       if (body[k] == null || body[k] === '') {
@@ -40,28 +47,33 @@ export async function POST(req) {
     }
 
     const adminDb = getAdminDb();
-
     const bookingRef = genRef(process.env.NEXT_PUBLIC_BOOKING_REF_PREFIX || 'G2G');
 
-    // Amount: baseline $65 -> 6500; package $199 -> 19900 (fallback to 6500)
-    const pkg = (body.packageType || '').toLowerCase();
-    const amountCents = pkg === 'package4' ? 19900 : 6500;
+    // Amount in cents from packageType
+    const pkg = String(body.packageType || '').toLowerCase();
+    const amountCents = pkg === 'package4' ? 19900 : 6500; // default baseline
 
+    // Persist the booking (keep all fields you already store)
     const payload = {
       clientName: body.name,
       email: body.email,
       phone: body.phone || '',
       region: body.region,
-      time: body.slot,                    // legacy slot string
+      time: body.slot, // legacy combined string
+
+      // Optional extras
       venue: body.venue || body.venueAddress || '',
       referringProfessional: { name: body.referringName || '' },
       medicalEmail: body.medicalEmail || null,
+
+      // Consent snapshot
       consent: {
         accepted: true,
         acceptedAt: new Date(),
         duration: body.consentDuration || 'Until Revoked',
       },
-      // structured:
+
+      // Structured fields your UI now sends
       dateISO: body.dateISO || null,
       start: body.start || null,
       end: body.end || null,
@@ -69,6 +81,7 @@ export async function POST(req) {
       packageType: pkg || 'baseline',
       allDates: Array.isArray(body.allDates) ? body.allDates : (body.dateISO ? [body.dateISO] : []),
 
+      // Payment metadata
       amountCents,
       currency: 'NZD',
 
@@ -77,18 +90,25 @@ export async function POST(req) {
       createdAt: new Date(),
     };
 
+    // Use bookingRef as the doc id so it's easy to fetch later
     await adminDb.collection('bookings').doc(bookingRef).set(payload);
 
-    // Build absolute redirect to the HPP generator
-    // (your /api/worldline/create route supports GET)
-    const redirectUrl = new URL(`/api/worldline/create?ref=${encodeURIComponent(bookingRef)}&amount=${amountCents}`, origin).toString();
+    // Build an ABSOLUTE redirect to your HPP generator
+    const createUrl = new URL(
+      `/api/worldline/create?ref=${encodeURIComponent(bookingRef)}&amount=${amountCents}`,
+      origin
+    ).toString();
 
-    return NextResponse.json({ ok: true, id: bookingRef, bookingRef, redirectUrl });
+    return NextResponse.json({
+      ok: true,
+      id: bookingRef,
+      bookingRef,
+      redirectUrl: createUrl,
+    });
   } catch (e) {
     console.error('POST /api/book error:', e);
-    // Always give the client somewhere to land
+    // Give the client a safe landing
     const ref = typeof e?.bookingRef === 'string' ? e.bookingRef : 'ERR';
-    const origin = new URL(req.url).origin;
     const fallback = new URL(`/success?ref=${encodeURIComponent(ref)}`, origin).toString();
     return NextResponse.json({ error: 'server_error', redirectUrl: fallback }, { status: 500 });
   }
