@@ -1,29 +1,25 @@
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
+import { getAdminDb } from "@/lib/firebaseAdmin";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-// Worldline will POST results here when "Post to Return URL" is enabled
 export async function POST(req: Request) {
   try {
-    const ctype = req.headers.get('content-type') || '';
-    let payload: any = {};
-    if (ctype.includes('application/json')) {
-      payload = await req.json().catch(() => ({}));
-    } else if (ctype.includes('application/x-www-form-urlencoded')) {
-      const fd = await req.formData();
-      payload = Object.fromEntries(fd.entries());
-    } else {
-      const txt = await req.text();
-      payload = { raw: txt };
-    }
-    // TODO: mark booking as paid using payload.merchantReference etc.
-    return NextResponse.json({ ok: true, received: payload });
-  } catch (e:any) {
-    return NextResponse.json({ ok:false, error: String(e?.message || e) }, { status: 500 });
-  }
-}
+    const url = new URL(req.url);
+    const ref = url.searchParams.get("ref") || "";
+    if (!ref) return NextResponse.json({ ok: false, error: "missing_ref" }, { status: 400 });
 
-// Allow GET for quick diagnostics
-export async function GET() {
-  return NextResponse.json({ ok:true, hint:'POST form data from Worldline is expected here.' });
+    // In a proper integration you'd parse Worldline notify payload here and verify signatures
+    const db = getAdminDb();
+    const q = await db.collection("bookings").where("bookingRef","==",ref).limit(1).get();
+    if (!q.empty) {
+      await q.docs[0].ref.set({ paid: true, paidAt: new Date() }, { merge: true });
+    }
+
+    // Always land the user on success page
+    return NextResponse.redirect(new URL(`/success?ref=${encodeURIComponent(ref)}`, url.origin));
+  } catch (e) {
+    console.error("POST /api/worldline/return error:", e);
+    return NextResponse.json({ ok:false, error:"server_error" }, { status:500 });
+  }
 }
