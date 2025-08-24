@@ -1,45 +1,95 @@
-'use client';
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+// app/pay/redirect/page.jsx
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-export default function PayRedirect() {
-  const sp = useSearchParams();
-  const ref = sp.get('ref') || '';
-  const amount = sp.get('amount') || '';
-  const [err, setErr] = useState('');
+/**
+ * Server page that receives ?ref=<bookingRef>&amount=<cents>
+ * and auto-POSTs a form to Worldline Web Payments WPRequest.
+ *
+ * Required env:
+ *   WORLDLINE_ENV            = uat | prod   (anything else treated as prod)
+ *   WORLDLINE_MERCHANT_ID    = your merchant id (e.g. 14617)
+ *   WORLDLINE_CURRENCY       = NZD
+ *   WORLDLINE_SUCCESS_URL    = https://good2go-rth.com/success
+ *   WORLDLINE_CANCEL_URL     = https://good2go-rth.com/cancel
+ *   WORLDLINE_ERROR_URL      = https://good2go-rth.com/error
+ *
+ * NOTE: If your account requires a MAC/HMAC, add that field here once you
+ * confirm the exact field name and signing algorithm from Click support.
+ */
 
-  useEffect(() => {
-    let mounted = true;
-    async function run() {
-      if (!ref || !amount) { setErr('Missing ref or amount.'); return; }
-      try {
-        const qs = new URLSearchParams({ ref, amount }).toString();
-        const r = await fetch(`/api/worldline/create?${qs}`);
-        const data = await r.json().catch(() => ({}));
-        if (!mounted) return;
-        if (data?.ok && data?.redirectUrl) {
-          window.location.href = data.redirectUrl;
-        } else {
-          console.error('worldline/create failed', data);
-          setErr('Could not start payment. See DevTools → Network → worldline/create.');
-        }
-      } catch (e) {
-        console.error('worldline/create fetch error', e);
-        setErr('Network error starting payment.');
-      }
-    }
-    run();
-    return () => { mounted = false; };
-  }, [ref, amount]);
-
-  return (
-    <main style={{maxWidth: 720, margin: '40px auto', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial'}}>
-      <h1>Starting payment…</h1>
-      <p>Ref: <code>{ref}</code></p>
-      <p>Amount (cents): <code>{amount}</code></p>
-      {err && <p style={{color:'#b91c1c', marginTop:12}}>{err}</p>}
-      <div style={{marginTop: 24, fontSize: 12, color: '#64748b'}}>build: pay-redirect • 2025-08-25</div>
-    </main>
-  );
+function wlBase(env) {
+  const e = (env || '').toLowerCase();
+  return e === 'uat'
+    ? 'https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest'
+    : 'https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest';
 }
 
+export default async function PayRedirectPage({ searchParams }) {
+  const ref = (searchParams?.ref || '').toString();
+  const amount = (searchParams?.amount || '').toString(); // cents
+  const merchantId = process.env.WORLDLINE_MERCHANT_ID || '';
+  const currency = process.env.WORLDLINE_CURRENCY || 'NZD';
+  const successUrl = process.env.WORLDLINE_SUCCESS_URL || 'https://good2go-rth.com/success';
+  const cancelUrl = process.env.WORLDLINE_CANCEL_URL || 'https://good2go-rth.com/cancel';
+  const errorUrl = process.env.WORLDLINE_ERROR_URL || 'https://good2go-rth.com/error';
+  const endpoint = wlBase(process.env.WORLDLINE_ENV);
+
+  // Very defensive guardrails so we never ship an empty POST
+  const problems = [];
+  if (!ref) problems.push('Missing ref');
+  if (!amount) problems.push('Missing amount');
+  if (!merchantId) problems.push('Missing WORLDLINE_MERCHANT_ID');
+
+  if (problems.length) {
+    return (
+      <html>
+        <body style={{ fontFamily: 'system-ui', padding: 20 }}>
+          <h2>Payment redirect blocked</h2>
+          <p>Fix the following:</p>
+          <ul>{problems.map((p) => <li key={p}>{p}</li>)}</ul>
+          <p>URL expected: <code>/pay/redirect?ref=BOOKING_REF&amp;amount=CENTS</code></p>
+        </body>
+      </html>
+    );
+  }
+
+  // Worldline field names (minimal set). These names come from the Click docs you pasted.
+  // If your account requires additional fields or a MAC, add inputs below.
+  const fields = {
+    merchantId,
+    // Web Payments expects amount in cents as a plain number
+    amount,
+    currency,
+    // "merchantReference" aligns with Worldline "reference/merchantRef"
+    merchantReference: ref,
+    returnUrl: successUrl,   // success/return in your console
+    cancelUrl,
+    errorUrl,
+  };
+
+  return (
+    <html>
+      <body>
+        <form id="wl-form" method="post" action={endpoint}>
+          {Object.entries(fields).map(([k, v]) => (
+            <input key={k} type="hidden" name={k} value={v} />
+          ))}
+          {/* If you later need a MAC/HMAC: */}
+          {/* <input type="hidden" name="mac" value={computedMac} /> */}
+        </form>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function(){ document.getElementById('wl-form').submit(); })();
+            `,
+          }}
+        />
+        <noscript>
+          <p>JavaScript is required to continue to the payment page.</p>
+          <button type="submit" form="wl-form">Continue</button>
+        </noscript>
+      </body>
+    </html>
+  );
+}
