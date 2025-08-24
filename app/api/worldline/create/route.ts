@@ -29,13 +29,10 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const origin = url.origin;
   const ref = url.searchParams.get('ref') || url.searchParams.get('bid');
-  let amount = url.searchParams.get('amount') ?? '';
+  let amount = url.searchParams.get('amount') || '';
 
   if (!ref) {
-    return NextResponse.json(
-      { ok:false, error:'missing_ref', hint:'/api/worldline/create?ref=<bookingRef>&amount=6500' },
-      { status:400 }
-    );
+    return NextResponse.json({ ok:false, error:'missing_ref', hint:'/api/worldline/create?ref=<bookingRef>&amount=6500' }, { status: 400 });
   }
 
   const base =
@@ -53,11 +50,10 @@ export async function GET(req: NextRequest) {
   const cancelUrl  = abs(origin, process.env.WORLDLINE_CANCEL_URL  || `/api/worldline/return?bid=${encodeURIComponent(ref)}&cancel=1`);
   const errorUrl   = abs(origin, process.env.WORLDLINE_ERROR_URL   || `/api/worldline/return?bid=${encodeURIComponent(ref)}&error=1`);
 
-  // load amount from booking if not provided
   if (!amount) {
     try {
       const db = getAdminDb();
-      const snap = await db.collection('bookings').doc(ref!).get();
+      const snap = await db.collection('bookings').doc(ref).get();
       if (snap.exists) {
         const data = snap.data() as any;
         if (data?.amountCents != null) amount = String(data.amountCents);
@@ -68,7 +64,7 @@ export async function GET(req: NextRequest) {
   const amountCents = parseInt(String(amount), 10);
   if (!Number.isFinite(amountCents) || amountCents <= 0) {
     if (process.env.DEBUG_HPP === '1') {
-      return NextResponse.json({ ok:false, error:'missing_or_invalid_amount', ref, hint:'amount=6500|19900' }, { status:400 });
+      return NextResponse.json({ ok:false, error:'missing_or_invalid_amount', ref, hint:'amount=6500|19900' }, { status: 400 });
     }
     return NextResponse.redirect(abs(origin, `/success?ref=${encodeURIComponent(ref)}`), 302);
   }
@@ -86,13 +82,12 @@ export async function GET(req: NextRequest) {
       headers: { 'Content-Type': 'application/json', 'Authorization': auth },
       body: JSON.stringify(body)
     });
-
     const text = await r.text();
     let json: any = null; try { json = JSON.parse(text); } catch {}
 
     if (!r.ok) {
       if (process.env.DEBUG_HPP === '1') {
-        return NextResponse.json({ ok:false, stage:'worldline_create', status:r.status, endpoint, requestBody: body, response:text }, { status: r.status || 500 });
+        return NextResponse.json({ ok:false, stage:'worldline_create', status:r.status, endpoint, requestBody: body, response: text }, { status: r.status || 500 });
       }
       return NextResponse.redirect(abs(origin, `/success?ref=${encodeURIComponent(ref)}`), 302);
     }
