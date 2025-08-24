@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 
 function genRef(prefix = 'G2G') {
   const d = new Date();
-  const pad = (n:number) => String(n).padStart(2,'0');
+  const pad = (n) => String(n).padStart(2,'0');
   const stamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   const rand = Math.random().toString(36).slice(2,5).toUpperCase();
   return `${prefix}-${stamp}-${rand}`;
@@ -23,7 +23,7 @@ export async function GET() {
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(req) {
   const origin = new URL(req.url).origin;
   try {
     const body = await req.json();
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
       bookingRef,
       status:'pending',
       createdAt:new Date()
-    } as any;
+    };
     await db.collection('bookings').doc(bookingRef).set(payload);
 
     const redirectUrl = new URL(`/api/worldline/create?ref=${encodeURIComponent(bookingRef)}&amount=${amountCents}`, origin).toString();
