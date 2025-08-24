@@ -1,29 +1,29 @@
-// app/api/worldline/return/route.ts
-import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getAdminDb } from '../../../../lib/firebaseAdmin';
 
 export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
 
-async function markPaid(bid: string) {
+// Worldline will POST results here when "Post to Return URL" is enabled
+export async function POST(req: Request) {
   try {
-    const db = getAdminDb();
-    await db.collection('bookings').doc(bid).set({ status:'paid', paidAt: new Date() }, { merge: true });
-  } catch {}
+    const ctype = req.headers.get('content-type') || '';
+    let payload: any = {};
+    if (ctype.includes('application/json')) {
+      payload = await req.json().catch(() => ({}));
+    } else if (ctype.includes('application/x-www-form-urlencoded')) {
+      const fd = await req.formData();
+      payload = Object.fromEntries(fd.entries());
+    } else {
+      const txt = await req.text();
+      payload = { raw: txt };
+    }
+    // TODO: mark booking as paid using payload.merchantReference etc.
+    return NextResponse.json({ ok: true, received: payload });
+  } catch (e:any) {
+    return NextResponse.json({ ok:false, error: String(e?.message || e) }, { status: 500 });
+  }
 }
 
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const bid = url.searchParams.get('bid') || url.searchParams.get('ref') || '';
-  if (bid) await markPaid(bid);
-
-  const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Booking Successful</title>
-  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:24px;max-width:720px;margin:0 auto}</style>
-  </head>
-  <body><h1>Booking Successful</h1>
-  <p>Reference: <strong>${bid}</strong></p>
-  <p><a href="/success?ref=${encodeURIComponent(bid)}">Continue</a></p>
-  </body></html>`;
-  return new NextResponse(html, { headers: { 'Content-Type': 'text/html' } });
+// Allow GET for quick diagnostics
+export async function GET() {
+  return NextResponse.json({ ok:true, hint:'POST form data from Worldline is expected here.' });
 }
