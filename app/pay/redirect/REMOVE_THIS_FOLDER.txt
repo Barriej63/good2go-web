@@ -1,0 +1,1 @@
+Remove this folder. The redirect page is no longer used.

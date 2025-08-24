@@ -1,124 +1,93 @@
+// app/api/worldline/create/route.ts
 import { NextResponse } from 'next/server';
-import { absFromReqOrigin } from '@/lib/url';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
-function pickBase(env: string | undefined) {
-  const e = (env || '').toLowerCase();
-  return e === 'uat' || e === 'test'
-    ? 'https://uat.paymarkclick.co.nz'
-    : 'https://secure.paymarkclick.co.nz';
+function esc(s: string) {
+  return s.replace(/[<&>"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c] as string));
 }
 
-// Try to extract a redirect URL from many possible server formats
-function sniffRedirectUrl(txt: string): string | null {
-  // 1) direct url in JSON-like text
-  const m1 = txt.match(/https?:\/\/[^"'<\s]+webpayments\/(?:default\.aspx|Default\.aspx)[^"'<\s]*/);
-  if (m1) return m1[0];
-  // 2) look for q= token
-  const m2 = txt.match(/q=([a-f0-9]{16,64})/i);
-  if (m2) {
-    const base = txt.includes('uat.paymarkclick.co.nz') ?
-      'https://uat.paymarkclick.co.nz' : 'https://secure.paymarkclick.co.nz';
-    return `${base}/webpayments/default.aspx?q=${m2[1]}`;
-  }
-  // 3) XML style <redirectUrl>...</redirectUrl>
-  const m3 = txt.match(/<redirectUrl>(.*?)<\/redirectUrl>/i);
-  if (m3) return m3[1];
-  return null;
-}
-
-export async function GET(req: Request) {
+export async function POST(req: Request): Promise<Response> {
   try {
-    const url = new URL(req.url);
-    const ref = url.searchParams.get('ref') || '';
-    const amountStr = url.searchParams.get('amount') || '';
-    const origin = req.headers.get('origin') || req.headers.get('x-forwarded-origin') || '';
-
-    if (!ref || !amountStr) {
-      return NextResponse.json({ ok: false, error: 'missing_params' }, { status: 400 });
+    const { ref, amount } = await req.json().catch(() => ({} as any));
+    if (!ref || !Number.isFinite(amount)) {
+      return NextResponse.json({ ok: false, error: 'missing ref/amount' }, { status: 400 });
     }
 
-    const amount = parseInt(String(amountStr), 10);
-    if (!Number.isFinite(amount) || amount < 50) {
-      return NextResponse.json({ ok: false, error: 'bad_amount' }, { status: 400 });
+    const ENV = (process.env.WORLDLINE_ENV || process.env.NEXT_PUBLIC_WORLDLINE_ENV || 'production').toLowerCase();
+    const base =
+      ENV === 'uat'
+        ? 'https://uat.paymarkclick.co.nz'
+        : 'https://secure.paymarkclick.co.nz';
+
+    const accountId = process.env.WORLDLINE_ACCOUNT_ID || process.env.NEXT_PUBLIC_WORLDLINE_ACCOUNT_ID || '';
+    const username  = process.env.WORLDLINE_USERNAME   || process.env.NEXT_PUBLIC_WORLDLINE_USERNAME   || '';
+    const password  = process.env.WORLDLINE_PASSWORD   || process.env.NEXT_PUBLIC_WORLDLINE_PASSWORD   || '';
+    const merchantId   = process.env.WORLDLINE_MERCHANT_ID   || process.env.NEXT_PUBLIC_WORLDLINE_MERCHANT_ID   || '';
+    const merchantName = process.env.WORLDLINE_MERCHANT_NAME || process.env.NEXT_PUBLIC_WORLDLINE_MERCHANT_NAME || 'Good2Go';
+    const currency  = process.env.WORLDLINE_CURRENCY || process.env.NEXT_PUBLIC_WORLDLINE_CURRENCY || 'NZD';
+
+    if (!accountId || !username || !password) {
+      return NextResponse.json({ ok: false, error: 'Missing Worldline credentials (accountId/username/password)' }, { status: 500 });
     }
 
-    const base = pickBase(process.env.WORLDLINE_ENV);
+    const dollars = Math.round(amount) / 100;
+
+    const host = process.env.NEXT_PUBLIC_SITE_ORIGIN || `https://${req.headers.get('host')}`;
+    const successUrl = new URL('/success', host).toString();
+    const cancelUrl  = new URL('/cancel',  host).toString();
+    const errorUrl   = new URL('/error',   host).toString();
+
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<WPRequest xmlns="https://secure.paymarkclick.co.nz/api/">
+  <Authentication>
+    <AccountId>${esc(accountId)}</AccountId>
+    <UserName>${esc(username)}</UserName>
+    <Password>${esc(password)}</Password>
+  </Authentication>
+  <Request>
+    <Merchant>
+      <MerchantId>${esc(merchantId)}</MerchantId>
+      <MerchantName>${esc(merchantName)}</MerchantName>
+    </Merchant>
+    <Transaction>
+      <Amount>${dollars.toFixed(2)}</Amount>
+      <Currency>${esc(currency)}</Currency>
+      <Reference>${esc(ref)}</Reference>
+    </Transaction>
+    <Urls>
+      <SuccessUrl>${esc(successUrl)}</SuccessUrl>
+      <CancelUrl>${esc(cancelUrl)}</CancelUrl>
+      <ErrorUrl>${esc(errorUrl)}</ErrorUrl>
+    </Urls>
+  </Request>
+</WPRequest>`;
+
     const endpoint = `${base}/api/webpayments/paymentservice/rest/WPRequest`;
-
-    // Absolute return URLs
-    const success = absFromReqOrigin(origin, process.env.NEXT_PUBLIC_WL_RETURN_SUCCESS || '/success');
-    const cancel  = absFromReqOrigin(origin, process.env.NEXT_PUBLIC_WL_RETURN_CANCEL  || '/cancel');
-    const error   = absFromReqOrigin(origin, process.env.NEXT_PUBLIC_WL_RETURN_ERROR   || '/error');
-
-    const creds = {
-      accountId: process.env.WORLDLINE_ACCOUNT_ID || '',
-      username:  process.env.WORLDLINE_USERNAME   || '',
-      password:  process.env.WORLDLINE_PASSWORD   || '',
-    };
-
-    // Defensive validation
-    if (!creds.accountId || !creds.username || !creds.password) {
-      return NextResponse.json({ ok:false, error:'missing_credentials' }, { status: 500 });
-    }
-
-    // Primary request: JSON body (common for newer WPRequest setups)
-    const jsonBody = {
-      accountId: creds.accountId,
-      username:  creds.username,
-      password:  creds.password,
-      amount:    { total: amount, currency: 'NZD' },
-      transaction: { reference: ref },
-      urls: { success, cancel, error }
-    };
-
-    let res = await fetch(endpoint, {
+    const resp = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(jsonBody)
+      headers: { 'Content-Type': 'application/xml' },
+      body: xml,
+      cache: 'no-store',
     });
 
-    let text = await res.text();
-    if (!res.ok || !text) {
-      // Fallback: form-urlencoded (some tenants require this shape)
-      const form = new URLSearchParams();
-      form.set('AccountId', creds.accountId);
-      form.set('Username', creds.username);
-      form.set('Password', creds.password);
-      form.set('Amount', String(amount));
-      form.set('Currency', 'NZD');
-      form.set('MerchantReference', ref);
-      form.set('SuccessURL', success);
-      form.set('FailureURL', error);
-      form.set('CancelURL', cancel);
-
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: form.toString()
-      });
-      text = await res.text();
+    const text = await resp.text();
+    const m = text.match(/<\s*redirecturl\s*>([^<]+)<\s*\/\s*redirecturl\s*>/i);
+    if (resp.ok && m?.[1]) {
+      return NextResponse.json({ ok: true, redirectUrl: (m[1] as string).trim() });
     }
-
-    // Try parse JSON
-    try {
-      const j = JSON.parse(text);
-      if (j?.redirectUrl) {
-        return NextResponse.json({ ok:true, redirectUrl: j.redirectUrl, endpoint });
-      }
-    } catch {}
-
-    // otherwise sniff any shape (XML/HTML/plain) for redirect
-    const sniffed = sniffRedirectUrl(text);
-    if (sniffed) {
-      return NextResponse.json({ ok:true, redirectUrl: sniffed, endpoint });
-    }
-
-    // Return diagnostic (trim long body)
-    const sample = text.slice(0, 800);
-    return NextResponse.json({ ok:false, error:'no_redirect', endpoint, sample }, { status: 502 });
-  } catch (e:any) {
-    return NextResponse.json({ ok:false, error:'server_error', detail: String(e?.message || e) }, { status: 500 });
+    const em = text.match(/<\s*errormessage\s*>([^<]+)</i);
+    const en = text.match(/<\s*errornumber\s*>([^<]+)</i);
+    return NextResponse.json({
+      ok: false,
+      status: resp.status,
+      endpoint,
+      error: em?.[1]?.trim() || 'WPRequest failed',
+      code: en?.[1]?.trim(),
+      body: text.slice(0, 1000),
+    }, { status: 502 });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || 'unhandled' }, { status: 500 });
   }
 }
