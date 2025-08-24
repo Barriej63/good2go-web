@@ -1,37 +1,35 @@
 import { NextResponse } from 'next/server';
-import { getAdminDb } from '../../../../lib/firebaseAdmin';
+import { getAdminDb } from '../../../../lib/firebaseAdmin.js';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req) {
-  const url = new URL(req.url);
-  const bid = url.searchParams.get('bid');
-  const status = (url.searchParams.get('status') || '').toLowerCase();
-  const ref = url.searchParams.get('ref') || '';
-  const adminDb = getAdminDb();
-
-  if (!bid) {
-    return NextResponse.json({ ok:false, error:'missing_bid' }, { status: 400 });
-  }
-
   try {
-    const update = {
-      paymentReturnAt: new Date(),
-      paymentStatus: status || 'unknown',
-      paymentRaw: Object.fromEntries(url.searchParams.entries()),
-    };
-    if (status === 'success') {
-      update.status = 'paid';
-      update.paidAt = new Date();
+    const { searchParams } = new URL(req.url);
+    const ref = searchParams.get('ref') || '';
+    if (!ref) {
+      return NextResponse.redirect(new URL('/error?code=missing_ref', req.url));
     }
-    await adminDb.collection('bookings').doc(bid).set(update, { merge: true });
 
-    // After marking, send the user to /success with the booking ref
-    const origin = req.nextUrl.origin;
-    const successUrl = `${origin}/success?ref=${encodeURIComponent(ref || bid)}`;
-    return NextResponse.redirect(successUrl, { status: 302 });
+    // Best-effort: mark paid in Firestore by bookingRef
+    try {
+      const db = getAdminDb();
+      const snap = await db.collection('bookings').where('bookingRef', '==', ref).limit(1).get();
+      if (!snap.empty) {
+        const doc = snap.docs[0];
+        await db.collection('bookings').doc(doc.id).set({
+          paid: true,
+          paidAt: new Date()
+        }, { merge: true });
+      }
+    } catch (e) {
+      console.error('WARN: could not mark paid:', e?.message || e);
+    }
+
+    const successUrl = new URL('/success', req.url);
+    successUrl.searchParams.set('ref', ref);
+    return NextResponse.redirect(successUrl);
   } catch (e) {
-    console.error('GET /api/worldline/return error:', e);
-    return NextResponse.json({ ok:false, error:'server_error' }, { status: 500 });
+    return NextResponse.json({ ok:false, error:'return_handler_error' }, { status: 500 });
   }
 }

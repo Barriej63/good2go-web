@@ -1,61 +1,95 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 
-export default function PayRedirect({ searchParams }) {
+/**
+ * /pay/redirect?ref=<REF>&amount=<CENTS>
+ * This page builds a proper HTML <form method="POST"> and auto-submits
+ * to Click/WebPayments. If you open this URL manually, you will still POST,
+ * so you will *not* see the 405 GET error anymore.
+ */
+export default function PayRedirectPage({ searchParams }) {
   const formRef = useRef(null);
-  const [err, setErr] = useState('');
-  const ref = (searchParams?.ref || '').toString();
-  const amount = parseInt((searchParams?.amount || '').toString(), 10);
+  const [ready, setReady] = useState(false);
+
+  // Read query
+  const ref = searchParams?.ref || '';
+  const amount = searchParams?.amount || '';
+
+  // Map field names from env (NEXT_PUBLIC_ so they are embedded at build time)
+  const ACTION = process.env.NEXT_PUBLIC_WORLDLINE_POST_URL || 'https://secure.paymarkclick.co.nz/webpayments';
+  const MERCHANT_FIELD = process.env.NEXT_PUBLIC_WORLDLINE_FIELD_MERCHANT || 'merchantId';
+  const AMOUNT_FIELD   = process.env.NEXT_PUBLIC_WORLDLINE_FIELD_AMOUNT   || 'amount';
+  const CURRENCY_FIELD = process.env.NEXT_PUBLIC_WORLDLINE_FIELD_CURRENCY || 'currency';
+  const REF_FIELD      = process.env.NEXT_PUBLIC_WORLDLINE_FIELD_REFERENCE|| 'reference';
+  const RETURN_FIELD   = process.env.NEXT_PUBLIC_WORLDLINE_FIELD_RETURN   || 'return_url';
+  const NOTIFY_FIELD   = process.env.NEXT_PUBLIC_WORLDLINE_FIELD_NOTIFY   || 'notification_url';
+
+  // Values
+  const MERCHANT_VALUE = process.env.NEXT_PUBLIC_WORLDLINE_MERCHANT_ID || '';
+  const CURRENCY_VALUE = process.env.NEXT_PUBLIC_WORLDLINE_CURRENCY || 'NZD';
+  // Return URL points to our server route that marks the booking paid and then redirects to success
+  const RETURN_URL     = (process.env.NEXT_PUBLIC_BASE_URL || 'https://good2go-rth.com') + '/api/worldline/return?ref=' + encodeURIComponent(ref);
+
+  // Extra passthrough fields (optional)
+  // You can add envs like NEXT_PUBLIC_WORLDLINE_EXTRA_FIELDS='{"testMode":"true"}'
+  let extras = {};
+  try {
+    if (process.env.NEXT_PUBLIC_WORLDLINE_EXTRA_FIELDS) {
+      extras = JSON.parse(process.env.NEXT_PUBLIC_WORLDLINE_EXTRA_FIELDS);
+    }
+  } catch (e) {}
 
   useEffect(() => {
-    if (!ref || !amount || Number.isNaN(amount)) {
-      setErr('Missing or invalid booking reference / amount.');
-      return;
+    // Minimal guardrails
+    if (!ref || !amount) return;
+    if (!MERCHANT_VALUE) return;
+    setReady(true);
+  }, [ref, amount, MERCHANT_VALUE]);
+
+  useEffect(() => {
+    if (ready && formRef.current) {
+      // Auto-submit after one tick
+      const t = setTimeout(() => {
+        formRef.current.submit();
+      }, 100);
+      return () => clearTimeout(t);
     }
-    const env = process.env.NEXT_PUBLIC_WORLDLINE_ENV || 'uat';
-    const base = env.toLowerCase() === 'prod' || env.toLowerCase() === 'production'
-      ? 'https://secure.paymarkclick.co.nz'
-      : 'https://uat.paymarkclick.co.nz';
-    const action = base + '/webpayments';
+  }, [ready]);
 
-    const origin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
-
-    const success = process.env.NEXT_PUBLIC_WORLDLINE_SUCCESS_URL || (origin + '/success');
-    const cancel  = process.env.NEXT_PUBLIC_WORLDLINE_CANCEL_URL  || (origin + '/cancel');
-    const error   = process.env.NEXT_PUBLIC_WORLDLINE_ERROR_URL   || (origin + '/error');
-
-    const merchantId = process.env.NEXT_PUBLIC_WORLDLINE_MERCHANT_ID || '';
-    if (!merchantId) {
-      setErr('Missing NEXT_PUBLIC_WORLDLINE_MERCHANT_ID');
-      return;
-    }
-    const f = formRef.current; if (!f) return;
-    f.action = action;
-    f.elements['merchantId'].value = merchantId;
-    f.elements['amount'].value = (amount / 100).toFixed(2);
-    f.elements['currency'].value = 'NZD';
-    f.elements['merchantReference'].value = ref;
-    f.elements['returnUrl'].value = success;
-    f.elements['cancelUrl'].value = cancel;
-    f.elements['errorUrl'].value = error;
-    f.submit();
-  }, [ref, amount]);
-
-  if (err) {
-    return (<div className="mx-auto max-w-xl p-6"><h1 className="text-2xl font-semibold mb-3">Cannot start payment</h1><p className="text-red-600">{err}</p></div>);
-  }
+  // Show a tiny debug for humans while the form posts
   return (
-    <div className="mx-auto max-w-xl p-6">
-      <h1 className="text-xl font-semibold mb-2">Redirecting to payment…</h1>
-      <form ref={formRef} method="POST" className="hidden">
-        <input type="hidden" name="merchantId" />
-        <input type="hidden" name="amount" />
-        <input type="hidden" name="currency" />
-        <input type="hidden" name="merchantReference" />
-        <input type="hidden" name="returnUrl" />
-        <input type="hidden" name="cancelUrl" />
-        <input type="hidden" name="errorUrl" />
-      </form>
+    <div style={{maxWidth: 720, margin: '40px auto', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial'}}>
+      <h1>Redirecting to Payment…</h1>
+      {!ref || !amount || !MERCHANT_VALUE ? (
+        <div style={{color: '#b91c1c'}}>
+          <p>Missing required data.</p>
+          <ul>
+            <li><b>ref</b> in query: <code>{String(ref)}</code></li>
+            <li><b>amount</b> in query (cents): <code>{String(amount)}</code></li>
+            <li><b>NEXT_PUBLIC_WORLDLINE_MERCHANT_ID</b>: <code>{String(MERCHANT_VALUE || '(empty)')}</code></li>
+          </ul>
+          <p>Fix your .env and retry the booking.</p>
+        </div>
+      ) : (
+        <>
+          <p>Please wait, sending you to our secure payment partner…</p>
+          <form ref={formRef} method="POST" action={ACTION}>
+            <input type="hidden" name={MERCHANT_FIELD} value={MERCHANT_VALUE} />
+            <input type="hidden" name={AMOUNT_FIELD} value={amount} />
+            <input type="hidden" name={CURRENCY_FIELD} value={CURRENCY_VALUE} />
+            <input type="hidden" name={REF_FIELD} value={ref} />
+            <input type="hidden" name={RETURN_FIELD} value={RETURN_URL} />
+            {NOTIFY_FIELD ? <input type="hidden" name={NOTIFY_FIELD} value={RETURN_URL} /> : null}
+            {Object.entries(extras).map(([k,v]) => (
+              <input key={k} type="hidden" name={k} value={String(v)} />
+            ))}
+            <noscript>
+              <button type="submit">Continue to payment</button>
+            </noscript>
+          </form>
+        </>
+      )}
+      <div style={{marginTop: 24, fontSize: 12, color: '#64748b'}}>build: pay-redirect • 2025-08-25</div>
     </div>
   );
 }
