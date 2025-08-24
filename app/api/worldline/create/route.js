@@ -1,66 +1,89 @@
-// app/api/worldline/create/route.js
 import { NextResponse } from 'next/server';
-import { getAdminDb } from '../../../../lib/firebaseAdmin';
-
 export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
 
-function abs(origin, pathOrUrl) { try { return new URL(pathOrUrl, origin).toString(); } catch { return pathOrUrl; } }
-function pickPaymentUrl(j) {
-  if (!j || typeof j !== 'object') return null;
-  for (const k of ['redirectUrl','paymentUrl','url','hppUrl','webPaymentUrl']) {
-    if (typeof j[k] === 'string' && j[k].startsWith('http')) return j[k];
-  }
-  if (j._links) {
-    for (const key of Object.keys(j._links)) {
-      const v = j._links[key];
-      if (v && typeof v.href === 'string' && v.href.startsWith('http')) return v.href;
-    }
-  }
-  return null;
+function pickBase() {
+  const envRaw = process.env.WORLDLINE_ENV || process.env.WORLDPAY_ENV || 'uat';
+  const env = String(envRaw).toLowerCase();
+  return env === 'prod' || env === 'production'
+    ? 'https://secure.paymarkclick.co.nz'
+    : 'https://uat.paymarkclick.co.nz';
 }
+function abs(origin, pathOrUrl) { try { return new URL(pathOrUrl, origin).toString(); } catch { return pathOrUrl; } }
+function b64(u, p) { return Buffer.from(`${u}:${p}`).toString('base64'); }
 
 export async function GET(req) {
-  const url = new URL(req.url); const origin = url.origin;
-  const ref = url.searchParams.get('ref') || url.searchParams.get('bid');
-  let amount = url.searchParams.get('amount');
-  if (!ref) return NextResponse.json({ ok:false, error:'missing_ref' }, { status: 400 });
-
-  const base = (process.env.WORLDLINE_API_BASE || '').replace(/\/$/, '') || (/^(prod|production|live)$/i.test(process.env.WORLDLINE_ENV || '') ? 'https://secure.paymarkclick.co.nz' : 'https://uat.paymarkclick.co.nz');
-  const endpoint = `${base}/api/payment`;
-
-  const accountId = process.env.WORLDPAY_ACCOUNT_ID || '';
-  const user = process.env.WORLDPAY_USERNAME || '';
-  const pass = process.env.WORLDPAY_PASSWORD || '';
-  const auth = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
-
-  const successUrl = abs(origin, process.env.WORLDLINE_SUCCESS_URL || `/api/worldline/return?bid=${encodeURIComponent(ref)}`);
-  const cancelUrl  = abs(origin, process.env.WORLDLINE_CANCEL_URL  || `/api/worldline/return?bid=${encodeURIComponent(ref)}&cancel=1`);
-  const errorUrl   = abs(origin, process.env.WORLDLINE_ERROR_URL   || `/api/worldline/return?bid=${encodeURIComponent(ref)}&error=1`);
-
-  if (!amount) {
-    try { const db = getAdminDb(); const snap = await db.collection('bookings').doc(ref).get();
-      if (snap.exists) { const data = snap.data() || {}; if (data.amountCents != null) amount = String(data.amountCents); } } catch {}
-  }
-  const amountCents = parseInt(String(amount || ''), 10);
-  if (!Number.isFinite(amountCents) || amountCents <= 0) {
-    if (process.env.DEBUG_HPP === '1') return NextResponse.json({ ok:false, error:'missing_or_invalid_amount', ref }, { status: 400 });
-    return NextResponse.redirect(abs(origin, `/success?ref=${encodeURIComponent(ref)}`), 302);
+  const url = new URL(req.url);
+  const ref = url.searchParams.get('ref') || '';
+  const amountStr = url.searchParams.get('amount') || '';
+  const amount = Number(amountStr);
+  if (!ref || !amount || !Number.isFinite(amount)) {
+    return NextResponse.json({ ok:false, error:'missing_ref_or_amount', ref, amountStr }, { status:400 });
   }
 
-  const body = { amount: { total: amountCents, currency: 'NZD' }, merchant: { merchantId: accountId }, transaction: { reference: ref }, urls: { success: successUrl, cancel: cancelUrl, error: errorUrl } };
+  const base = pickBase();
+  const endpoint = `${base}/api/webpayments/paymentservice/rest/WPRequest`;
+  const siteOrigin = process.env.NEXT_PUBLIC_SITE_ORIGIN || `${url.protocol}//${url.host}`;
+  const merchantId = process.env.WORLDLINE_MERCHANT_ID || process.env.WORLDPAY_MERCHANT_ID || '';
+  const username   = process.env.WORLDLINE_USERNAME   || process.env.WORLDPAY_USERNAME   || '';
+  const password   = process.env.WORLDLINE_PASSWORD   || process.env.WORLDPAY_PASSWORD   || '';
+  if (!merchantId || !username || !password) {
+    return NextResponse.json({ ok:false, error:'missing_worldline_credentials' }, { status:500 });
+  }
 
+  const returnUrl = abs(siteOrigin, `/api/worldline/return?status=return&ref=${encodeURIComponent(ref)}`);
+  const cancelUrl = abs(siteOrigin, `/cancel?ref=${encodeURIComponent(ref)}`);
+  const errorUrl  = abs(siteOrigin, `/error?ref=${encodeURIComponent(ref)}`);
+  const notifyUrl = abs(siteOrigin, `/api/worldline/return?status=notify&ref=${encodeURIComponent(ref)}`);
+
+  const body = {
+    merchantId,
+    amount: String(Math.round(amount)),
+    currency: 'NZD',
+    transactionReference: ref,
+    returnUrl,
+    cancelUrl,
+    errorUrl,
+    notificationUrl: notifyUrl,
+    merchant: { merchantId },
+    transaction: { reference: ref, amount: { total: Math.round(amount), currency: 'NZD' } },
+    urls: { success: returnUrl, cancel: cancelUrl, error: errorUrl, notification: notifyUrl }
+  };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Basic ${b64(username, password)}`,
+    'Accept': 'application/json,text/html;q=0.9,*/*;q=0.8',
+  };
+
+  let resp;
   try {
-    const r = await fetch(endpoint, { method:'POST', headers: { 'Content-Type':'application/json', 'Authorization':auth }, body: JSON.stringify(body) });
-    const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {}
-    if (!r.ok) { if (process.env.DEBUG_HPP === '1') return NextResponse.json({ ok:false, stage:'worldline_create', status:r.status, endpoint, requestBody: body, response:text }, { status: r.status||500 });
-      return NextResponse.redirect(abs(origin, `/success?ref=${encodeURIComponent(ref)}`), 302); }
-    const payUrl = pickPaymentUrl(json);
-    if (payUrl) return NextResponse.redirect(payUrl, 302);
-    if (process.env.DEBUG_HPP === '1') return NextResponse.json({ ok:false, stage:'no_link_found', endpoint, requestBody: body, response: json ?? text }, { status: 502 });
-    return NextResponse.redirect(abs(origin, `/success?ref=${encodeURIComponent(ref)}`), 302);
+    resp = await fetch(endpoint, { method:'POST', headers, body: JSON.stringify(body) });
   } catch (e) {
-    if (process.env.DEBUG_HPP === '1') return NextResponse.json({ ok:false, stage:'exception', message:String(e) }, { status: 500 });
-    return NextResponse.redirect(abs(origin, `/success?ref=${encodeURIComponent(ref)}`), 302);
+    return NextResponse.json({ ok:false, stage:'fetch_failed', message:String(e), endpoint }, { status:502 });
   }
+
+  const status = resp.status;
+  const contentType = resp.headers.get('content-type') || '';
+  const text = await resp.text();
+
+  if (status < 200 || status >= 300) {
+    return NextResponse.json({ ok:false, stage:'worldline_create', status, endpoint, sample: text.slice(0,800) }, { status:502 });
+  }
+
+  let redirectUrl = '';
+  if (contentType.includes('application/json')) {
+    try {
+      const data = JSON.parse(text);
+      redirectUrl = data?.redirectUrl || data?.requestUrl || data?.paymentPageUrl || data?.webPaymentUrl || '';
+    } catch {}
+  }
+  if (!redirectUrl) {
+    const m = text.match(/https?:\/\/[^"'<\s]+\/webpayments[^"'<\s]*/i);
+    if (m) redirectUrl = m[0];
+  }
+  if (!redirectUrl) {
+    return NextResponse.json({ ok:false, stage:'no_redirect_in_response', status, endpoint, contentType, sample: text.slice(0,800) }, { status:502 });
+  }
+  return NextResponse.json({ ok:true, redirectUrl, endpointUsed: endpoint });
 }
+
