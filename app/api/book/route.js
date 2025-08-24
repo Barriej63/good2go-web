@@ -7,31 +7,30 @@ export const runtime = 'nodejs';
 
 function genRef(prefix = 'G2G') {
   const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = n => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   const rand = Math.random().toString(36).slice(2,5).toUpperCase();
   return `${prefix}-${stamp}-${rand}`;
 }
 
-// GET health
+// Health probe
 export async function GET() {
   try {
     const db = getAdminDb();
     await db.listCollections();
     return NextResponse.json({ ok: true, admin: 'ready' });
   } catch (e) {
-    console.error('GET /api/book health error:', e);
     return NextResponse.json({ ok: false, error: 'admin_init_failed' }, { status: 500 });
   }
 }
 
-// POST booking
+// Create booking (referringName and medicalEmail are OPTIONAL)
 export async function POST(req) {
   const origin = new URL(req.url).origin;
+
   try {
     const body = await req.json();
-
-    const required = ['name','email','region','slot','referringName','consentAccepted'];
+    const required = ['name','email','region','slot','consentAccepted'];
     for (const k of required) {
       if (body[k] == null || body[k] === '') {
         return NextResponse.json({ error: `Missing field: ${k}` }, { status: 400 });
@@ -44,9 +43,8 @@ export async function POST(req) {
     const adminDb = getAdminDb();
     const bookingRef = genRef(process.env.NEXT_PUBLIC_BOOKING_REF_PREFIX || 'G2G');
 
-    // figure price
     const pkg = String(body.packageType || '').toLowerCase();
-    const amountCents = pkg === 'package4' ? 19900 : 6500;
+    const amountCents = pkg === 'package4' ? 19900 : 6500; // default baseline
 
     const payload = {
       clientName: body.name,
@@ -81,7 +79,6 @@ export async function POST(req) {
 
     return NextResponse.json({ ok: true, id: bookingRef, bookingRef, redirectUrl });
   } catch (e) {
-    console.error('POST /api/book error:', e);
     const fallback = new URL(`/success?ref=ERR`, origin).toString();
     return NextResponse.json({ error: 'server_error', redirectUrl: fallback }, { status: 500 });
   }
