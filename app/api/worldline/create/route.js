@@ -1,103 +1,86 @@
-// app/api/worldline/create/route.js
-import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+import { NextResponse } from 'next/server';
 
-function pickBase() {
-  const env = String(process.env.WORLDLINE_ENV || process.env.WORLDPAY_ENV || 'uat').toLowerCase();
-  return env === 'prod' || env === 'production'
+function pickEnv(k, def='') {
+  return process.env[k] || process.env['NEXT_PUBLIC_' + k] || def;
+}
+
+function endpoints(env) {
+  const isProd = /^(prod|production|live)$/i.test(env||'');
+  const base = isProd
     ? 'https://secure.paymarkclick.co.nz'
     : 'https://uat.paymarkclick.co.nz';
+  return {
+    wpRequest: base + '/api/webpayments/paymentservice/rest/WPRequest',
+  };
 }
-function b64(u, p) {
-  return Buffer.from(`${u || ''}:${p || ''}`).toString('base64');
-}
-function abs(origin, pathOrUrl) {
-  try { return new URL(pathOrUrl, origin).toString(); } catch { return pathOrUrl; }
+
+function mkBody(fields) {
+  const sp = new URLSearchParams();
+  Object.entries(fields).forEach(([k,v]) => sp.append(k, String(v ?? '')));
+  return sp.toString();
 }
 
 export async function GET(req) {
-  const url = new URL(req.url);
-  const ref = url.searchParams.get('ref') || '';
-  const amountStr = url.searchParams.get('amount') || '0';
-  const amount = Number(amountStr);
-  if (!ref || !amount || Number.isNaN(amount)) {
-    return NextResponse.json({ ok:false, error:'missing_ref_or_amount', ref, amount: amountStr }, { status: 400 });
-  }
-
-  const base = pickBase();
-  const endpoint = `${base}/api/webpayments/paymentservice/rest/WPRequest`;
-
-  const accountId = process.env.WORLDLINE_ACCOUNT_ID || process.env.WORLDPAY_ACCOUNT_ID || process.env.WORLDLINE_MERCHANT_ID || process.env.WORLDPAY_MERCHANT_ID || '';
-  const username  = process.env.WORLDLINE_USERNAME   || process.env.WORLDPAY_USERNAME   || '';
-  const password  = process.env.WORLDLINE_PASSWORD   || process.env.WORLDPAY_PASSWORD   || '';
-
-  if (!username || !password || !accountId) {
-    return NextResponse.json({ ok:false, error:'missing_credentials', need: {
-      WORLDLINE_ACCOUNT_ID: !!process.env.WORLDLINE_ACCOUNT_ID,
-      WORLDLINE_USERNAME: !!process.env.WORLDLINE_USERNAME,
-      WORLDLINE_PASSWORD: !!process.env.WORLDLINE_PASSWORD
-    }}, { status: 500 });
-  }
-
-  const origin = process.env.NEXT_PUBLIC_SITE_ORIGIN || `${url.protocol}//${url.host}`;
-
-  const successUrl = process.env.WORLDLINE_SUCCESS_URL || abs(origin, '/success');
-  const cancelUrl  = process.env.WORLDLINE_CANCEL_URL  || abs(origin, '/cancel');
-  const errorUrl   = process.env.WORLDLINE_ERROR_URL   || abs(origin, '/error');
-  const notifyUrl  = abs(origin, `/api/worldline/return?ref=${encodeURIComponent(ref)}&status=notify`);
-
-  const body = {
-    accountId,
-    amount: String(amount),
-    currency: 'NZD',
-    merchantReference: ref,
-    returnUrl: successUrl,
-    cancelUrl,
-    errorUrl,
-    notificationUrl: notifyUrl,
-    merchant: { merchantId: accountId },
-    transaction: { reference: ref, amount: { total: amount, currency: 'NZD' } },
-    urls: { success: successUrl, cancel: cancelUrl, error: errorUrl, notification: notifyUrl }
-  };
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json,application/xml,text/xml;q=0.9,*/*;q=0.8',
-    'Authorization': `Basic ${b64(username, password)}`,
-    'AccountId': accountId
-  };
-
-  let resp;
   try {
-    resp = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
+    const url = new URL(req.url);
+    const ref = url.searchParams.get('ref') || '';
+    const amount = url.searchParams.get('amount') || '';
+    if (!ref || !amount) {
+      return NextResponse.json({ ok:false, error:'missing_ref_or_amount' }, { status: 400 });
+    }
+
+    const env = pickEnv('WORLDLINE_ENV', pickEnv('NEXT_PUBLIC_WORLDLINE_ENV','uat'));
+    const ep  = endpoints(env);
+
+    const accountId = pickEnv('WORLDLINE_ACCOUNT_ID', pickEnv('NEXT_PUBLIC_WORLDLINE_ACCOUNT_ID',''));
+    const username  = pickEnv('WORLDLINE_USERNAME', pickEnv('NEXT_PUBLIC_WORLDLINE_USERNAME',''));
+    const password  = pickEnv('WORLDLINE_PASSWORD', pickEnv('NEXT_PUBLIC_WORLDLINE_PASSWORD',''));
+    const currency  = pickEnv('PAYMENT_CURRENCY', pickEnv('NEXT_PUBLIC_PAYMENT_CURRENCY','NZD'));
+
+    const origin = url.origin;
+    const returnUrl = origin + '/api/worldline/return';
+    const notifyUrl = origin + '/api/worldline/return?notify=1';
+
+    // If your tenant expects different keys, edit here to match.
+    const fields = {
+      account_id: accountId,
+      username,
+      password,
+      amount: String(amount),
+      currency,
+      return_url: returnUrl,
+      notification_url: notifyUrl,
+      merchant_reference: ref,
+    };
+
+    const body = mkBody(fields);
+    const resp = await fetch(ep.wpRequest, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    });
+
+    const ct = resp.headers.get('content-type') || '';
+    const txt = await resp.text();
+
+    if (!resp.ok) {
+      return new NextResponse(
+        JSON.stringify({ ok:false, stage:'worldline_create', status:resp.status, endpoint:ep.wpRequest, requestBody: fields, response: txt }),
+        { status: 502, headers: { 'content-type':'application/json' } }
+      );
+    }
+
+    // If Worldline replies with HTML (common), pass it straight through so browser continues flow.
+    if (/text\/html/i.test(ct)) {
+      return new NextResponse(txt, { status: 200, headers: { 'content-type':'text/html; charset=utf-8' } });
+    }
+
+    // Otherwise return JSON (uncommon), and let client handle redirect if they include a URL.
+    return NextResponse.json({ ok:true, passthrough:true, body: txt });
   } catch (e) {
-    return NextResponse.json({ ok:false, stage:'network_error', message: e?.message || String(e), endpoint }, { status: 502 });
+    console.error('GET /api/worldline/create error:', e);
+    return NextResponse.json({ ok:false, error:'server_error' }, { status:500 });
   }
-
-  const contentType = resp.headers.get('content-type') || '';
-  const status = resp.status;
-  const text = await resp.text();
-
-  if (status < 200 || status >= 300) {
-    return NextResponse.json({ ok:false, stage:'wprequest_error', status, endpoint, contentType, sample: text.substring(0, 1200) }, { status: 502 });
-  }
-
-  let redirectUrl = '';
-  if (contentType.includes('application/json')) {
-    try {
-      const data = JSON.parse(text);
-      redirectUrl = data.redirectUrl || data.requestUrl || data.paymentPageUrl || data.url || '';
-    } catch {}
-  }
-  if (!redirectUrl) {
-    const m = text.match(/https?:\/\/[^\s"'<>]+\/webpayments[^\s"'<>]*/i);
-    if (m) redirectUrl = m[0];
-  }
-
-  if (!redirectUrl) {
-    return NextResponse.json({ ok:false, stage:'no_redirect_found', status, endpoint, contentType, sample: text.substring(0, 1200) }, { status: 502 });
-  }
-
-  return NextResponse.json({ ok:true, redirectUrl, endpointUsed: endpoint });
 }

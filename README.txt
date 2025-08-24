@@ -1,42 +1,34 @@
-# Good2Go — Pay Redirect Suspense Fix (0825)
 
-This bundle fixes the build error:
-> useSearchParams() should be wrapped in a suspense boundary at page "/pay/redirect"
+Good2Go — Worldline Payments Bundle (0825)
+==========================================
 
-and keeps the Worldline redirect logic on the client.
+This bundle adds:
+- Client redirect page (/pay/redirect) with Suspense wrapper.
+- Server-side Worldline “create” endpoint at /api/worldline/create
+  (posts to WPRequest and streams back the HTML so the browser continues).
+- Worldline return endpoint at /api/worldline/return (accepts GET/POST and
+  routes to /success or /error with the booking ref).
+- Client page auto-fallback: if direct POST fails, it calls
+  /api/worldline/create?ref=...&amount=...
 
-## Files in this ZIP
+REQUIRED PUBLIC ENVS (configure in hosting dashboard):
+  NEXT_PUBLIC_WORLDLINE_ENV            uat | prod
+  NEXT_PUBLIC_WORLDLINE_ACCOUNT_ID     <your account id>
+  NEXT_PUBLIC_WORLDLINE_USERNAME       <your username>
+  NEXT_PUBLIC_WORLDLINE_PASSWORD       <your password>
+  NEXT_PUBLIC_PAYMENT_CURRENCY         NZD   (default used if missing)
 
-- `app/pay/redirect/page.jsx` — server component wrapper with `<Suspense>` and `dynamic = 'force-dynamic'`
-- `app/pay/redirect/redirect-client.jsx` — client component that reads `?ref` and `?amount` then posts
-  a hidden form to the Worldline **WPRequest** endpoint.
+OPTIONAL SERVER ENVS (if you prefer not to expose public ones):
+  WORLDLINE_ENV, WORLDLINE_ACCOUNT_ID, WORLDLINE_USERNAME, WORLDLINE_PASSWORD
 
-Place the folders at the **repo root** so paths match exactly.
+Booking page (client):
+  After /api/book returns { ok:true, bookingRef }, redirect to:
+    /pay/redirect?ref=<BOOKING_REF>&amount=<CENTS>
 
-## Required ENV (client‑exposed)
-
-Set these in your hosting dashboard as **public** envs (NEXT_PUBLIC_…):
-
-- `NEXT_PUBLIC_WORLDLINE_ENV` — `uat` or `prod`
-- `NEXT_PUBLIC_WORLDLINE_ACCOUNT_ID` — your Click accountId / merchantId (common param name varies by tenant)
-- `NEXT_PUBLIC_WORLDLINE_USERNAME`
-- `NEXT_PUBLIC_WORLDLINE_PASSWORD`
-- `NEXT_PUBLIC_PAYMENT_CURRENCY` — default `NZD` (optional)
-
-> If your tenant expects different parameter names (e.g. `merchantId` instead of `account_id`), edit
-> the three form fields in `redirect-client.jsx` to match.
-
-## Booking page
-
-After `/api/book` returns `{ ok:true, bookingRef }`, redirect the browser to:
-
-```js
-const amount = isPackage ? 19900 : 6500; // cents
-window.location.href = `/pay/redirect?ref=${encodeURIComponent(bookingRef)}&amount=${amount}`;
-```
-
-## Notes
-
-- This page is **not pre-rendered** (`dynamic = 'force-dynamic'`) because it depends on search params.
-- If you later want server‑side creation instead of a browser POST, swap the form code
-  for a `fetch('/api/worldline/create', …)` and redirect to the URL your API returns.
+Notes:
+  - We use the official WPRequest REST endpoint you pasted:
+    UAT:  https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest
+    PROD: https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest
+  - Fields names are the commonly used ones; if your tenant expects slightly
+    different keys, edit the `buildFields()` function in redirect-client.jsx
+    and api/worldline/create/route.js (they’re in one place for each side).

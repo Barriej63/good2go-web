@@ -1,20 +1,11 @@
-// app/pay/redirect/page.jsx
+
+export const dynamic = 'force-dynamic';
 import { Suspense } from 'react';
 import RedirectClient from './redirect-client';
 
-// This page depends on runtime query params (?ref, ?amount)
-// so do not pre-render.
-export const dynamic = 'force-dynamic';
-
-export default function PayRedirectPage() {
+export default function Page() {
   return (
-    <Suspense
-      fallback={
-        <main className="p-6 text-lg">
-          Preparing your payment… (do not close this window)
-        </main>
-      }
-    >
+    <Suspense fallback={<div style={{padding:'2rem'}}>Preparing payment…</div>}>
       <RedirectClient />
     </Suspense>
   );

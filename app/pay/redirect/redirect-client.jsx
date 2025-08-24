@@ -1,73 +1,85 @@
-// app/pay/redirect/redirect-client.jsx
+
 'use client';
-
+import { useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useMemo } from 'react';
 
-/**
- * Reads ?ref= and ?amount= from the URL and POSTs a hidden form
- * to the proper Worldline endpoint. This is the browser side only;
- * if you later prefer a server proxy, replace this with a fetch to
- * /api/worldline/create that returns the HPP URL.
- */
+function getEnv(k, def='') {
+  if (typeof window === 'undefined') return def;
+  return process.env[k] || def;
+}
+
+function endpoints(env) {
+  const isProd = /^(prod|production|live)$/i.test(env||'');
+  const base = isProd
+    ? 'https://secure.paymarkclick.co.nz'
+    : 'https://uat.paymarkclick.co.nz';
+  return {
+    wpRequest: base + '/api/webpayments/paymentservice/rest/WPRequest',
+  };
+}
+
+function buildFields({ref, amount}) {
+  const env = getEnv('NEXT_PUBLIC_WORLDLINE_ENV','uat');
+  const ep  = endpoints(env);
+  // Merchant creds
+  const accountId = getEnv('NEXT_PUBLIC_WORLDLINE_ACCOUNT_ID','');
+  const username  = getEnv('NEXT_PUBLIC_WORLDLINE_USERNAME','');
+  const password  = getEnv('NEXT_PUBLIC_WORLDLINE_PASSWORD','');
+  const currency  = getEnv('NEXT_PUBLIC_PAYMENT_CURRENCY','NZD');
+
+  // Return endpoints
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const returnUrl = origin + '/api/worldline/return';
+  const notifyUrl = origin + '/api/worldline/return?notify=1';
+
+  // Adjust key names here if your tenant expects different field names.
+  const fields = {
+    account_id: accountId,
+    username,
+    password,
+    amount: String(amount || ''),
+    currency,
+    return_url: returnUrl,
+    notification_url: notifyUrl,
+    merchant_reference: ref || '',
+  };
+  return { action: ep.wpRequest, fields };
+}
+
 export default function RedirectClient() {
-  const sp = useSearchParams();
-  const ref = sp.get('ref') || '';
-  const amount = sp.get('amount') || '';
-
-  // pick UAT vs PROD from env
-  const endpoint = useMemo(() => {
-    const env = (process.env.NEXT_PUBLIC_WORLDLINE_ENV || '').toLowerCase();
-    const isProd = env === 'prod' || env === 'production' || env === 'live';
-    return isProd
-      ? 'https://secure.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest'
-      : 'https://uat.paymarkclick.co.nz/api/webpayments/paymentservice/rest/WPRequest';
-  }, []);
+  const params = useSearchParams();
 
   useEffect(() => {
-    if (!ref || !amount) return;
+    const ref    = params.get('ref') || '';
+    const amount = params.get('amount') || '';
+    if (!ref || !amount) {
+      console.error('pay/redirect missing ref or amount');
+      return;
+    }
 
-    // If your profile expects different field names, update here:
-    const ACCOUNT_ID = process.env.NEXT_PUBLIC_WORLDLINE_ACCOUNT_ID || '';
-    const USERNAME   = process.env.NEXT_PUBLIC_WORLDLINE_USERNAME || '';
-    const PASSWORD   = process.env.NEXT_PUBLIC_WORLDLINE_PASSWORD || '';
-    const CURRENCY   = process.env.NEXT_PUBLIC_PAYMENT_CURRENCY || 'NZD';
+    const { action, fields } = buildFields({ref, amount});
 
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = endpoint;
+    // 1) Try direct POST via a hidden form
+    try {
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = action;
+      form.style.display = 'none';
+      Object.entries(fields).forEach(([k,v]) => {
+        const input = document.createElement('input');
+        input.name = k;
+        input.value = String(v ?? '');
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e) {
+      console.warn('Direct POST failed, falling back to server create', e);
+      // 2) Fallback to server-side create which streams HTML back
+      const qs = new URLSearchParams({ ref, amount: String(amount) }).toString();
+      window.location.href = '/api/worldline/create?' + qs;
+    }
+  }, [params]);
 
-    const add = (name, value) => {
-      const i = document.createElement('input');
-      i.type = 'hidden';
-      i.name = name;
-      i.value = value;
-      form.appendChild(i);
-    };
-
-    // Common Worldline fields (adjust to your tenant if names differ)
-    add('account_id', ACCOUNT_ID);   // sometimes 'merchantId' or 'accountId'
-    add('username', USERNAME);
-    add('password', PASSWORD);
-    add('amount', amount);           // integer cents
-    add('currency', CURRENCY);
-    add('reference', ref);
-
-    const origin = window.location.origin;
-    add('return_url', `${origin}/api/worldline/return?ref=${encodeURIComponent(ref)}`);
-    add('notification_url', `${origin}/api/worldline/return?notify=1`);
-
-    document.body.appendChild(form);
-    form.submit();
-
-    return () => {
-      try { document.body.removeChild(form); } catch {}
-    };
-  }, [ref, amount, endpoint]);
-
-  return (
-    <main className="p-6 text-lg">
-      Redirecting to Worldline… (do not close this window)
-    </main>
-  );
+  return <div style={{padding:'2rem'}}>Redirecting to payment…</div>;
 }
