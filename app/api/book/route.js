@@ -1,3 +1,4 @@
+// app/api/book/route.js
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '../../../lib/firebaseAdmin';
 
@@ -6,7 +7,7 @@ export const runtime = 'nodejs';
 
 function genRef(prefix = 'G2G') {
   const d = new Date();
-  const pad = n => String(n).padStart(2,'0');
+  const pad = (n:number) => String(n).padStart(2,'0');
   const stamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   const rand = Math.random().toString(36).slice(2,5).toUpperCase();
   return `${prefix}-${stamp}-${rand}`;
@@ -17,12 +18,12 @@ export async function GET() {
     const db = getAdminDb();
     await db.listCollections();
     return NextResponse.json({ ok:true, admin:'ready' });
-  } catch(e) {
+  } catch {
     return NextResponse.json({ ok:false, error:'admin_init_failed' }, { status:500 });
   }
 }
 
-export async function POST(req) {
+export async function POST(req: Request) {
   const origin = new URL(req.url).origin;
   try {
     const body = await req.json();
@@ -64,14 +65,13 @@ export async function POST(req) {
       bookingRef,
       status:'pending',
       createdAt:new Date()
-    };
+    } as any;
     await db.collection('bookings').doc(bookingRef).set(payload);
 
     const redirectUrl = new URL(`/api/worldline/create?ref=${encodeURIComponent(bookingRef)}&amount=${amountCents}`, origin).toString();
     return NextResponse.json({ ok:true, bookingRef, redirectUrl });
-  }catch(e){
+  }catch{
     const fallback = new URL(`/success?ref=ERR`, origin).toString();
     return NextResponse.json({ error:'server_error', redirectUrl:fallback },{status:500});
   }
 }
-

@@ -1,3 +1,4 @@
+// app/api/worldline/create/route.ts
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '../../../../lib/firebaseAdmin';
@@ -20,20 +21,21 @@ function pickPaymentUrl(j:any):string|null {
   }
   return null;
 }
+function stripTrailingSlash(s:string){ return s && s.endsWith('/') ? s.slice(0,-1) : s; }
 
 export async function GET(req:NextRequest){
   const url=new URL(req.url); const origin=url.origin;
   const ref=url.searchParams.get('ref')||url.searchParams.get('bid'); let amount=url.searchParams.get('amount')||'';
   if(!ref){ return NextResponse.json({ ok:false,error:'missing_ref'}, {status:400}); }
 
-  const base=(process.env.WORLDLINE_API_BASE||'').replace(/\\/$/,'')||
-    (/^(prod|production|live)$/i.test(process.env.WORLDLINE_ENV||'')? 'https://secure.paymarkclick.co.nz':'https://uat.paymarkclick.co.nz');
+  const base = stripTrailingSlash(process.env.WORLDLINE_API_BASE || '') ||
+    (/^(prod|production|live)$/i.test(process.env.WORLDLINE_ENV||'')? 'https://secure.paymarkclick.co.nz' : 'https://uat.paymarkclick.co.nz');
   const endpoint=`${base}/api/payment`;
 
   const accountId=process.env.WORLDPAY_ACCOUNT_ID||process.env.WORLDLINE_ACCOUNT_ID||'';
   const user=process.env.WORLDPAY_USERNAME||process.env.WORLDLINE_USERNAME||'';
   const pass=process.env.WORLDPAY_PASSWORD||process.env.WORLDLINE_PASSWORD||'';
-  const auth='Basic '+Buffer.from(`${user}:${pass}`).toString('base64');
+  const auth=user||pass? ('Basic '+Buffer.from(`${user}:${pass}`).toString('base64')) : '';
 
   const successUrl=abs(origin, process.env.WORLDLINE_SUCCESS_URL||`/api/worldline/return?bid=${encodeURIComponent(ref)}`);
   const cancelUrl=abs(origin, process.env.WORLDLINE_CANCEL_URL||`/api/worldline/return?bid=${encodeURIComponent(ref)}&cancel=1`);
@@ -56,7 +58,9 @@ export async function GET(req:NextRequest){
     urls:{success:successUrl,cancel:cancelUrl,error:errorUrl}};
 
   try{
-    const r=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':auth},body:JSON.stringify(body)});
+    const headers:any={'Content-Type':'application/json'};
+    if(auth) headers['Authorization']=auth;
+    const r=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(body)});
     const text=await r.text(); let json:any=null; try{json=JSON.parse(text);}catch{}
     if(!r.ok){
       if(process.env.DEBUG_HPP==='1'){ return NextResponse.json({ok:false,stage:'worldline_create',status:r.status,endpoint,requestBody:body,response:text},{status:r.status||500}); }

@@ -1,3 +1,4 @@
+// app/api/worldline/return/route.ts
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '../../../../lib/firebaseAdmin';
