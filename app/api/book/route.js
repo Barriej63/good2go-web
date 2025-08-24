@@ -1,4 +1,3 @@
-
 // app/api/book/route.js
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '../../../lib/firebaseAdmin';
@@ -13,79 +12,84 @@ function genRef(prefix = 'G2G') {
   return `${prefix}-${stamp}-${rand}`;
 }
 
-function abs(origin, pathOrUrl) {
-  try { return new URL(pathOrUrl, origin).toString(); }
-  catch { return origin + pathOrUrl; }
-}
-
-// Health
 export async function GET(req) {
   try {
     const db = getAdminDb();
     await db.listCollections();
-    return NextResponse.json({ ok: true, env: process.env.WORLDLINE_ENV || 'uat', admin: 'ready' });
+    return NextResponse.json({ ok: true, env: process.env.NODE_ENV || 'unknown', admin: 'ready' });
   } catch (e) {
+    console.error('GET /api/book health error:', e);
     return NextResponse.json({ ok: false, error: 'admin_init_failed' }, { status: 500 });
   }
 }
 
 export async function POST(req) {
+  const origin = new URL(req.url).origin;
+
   try {
-    const origin = new URL(req.url).origin;
     const body = await req.json();
+
     const required = ['name','email','region','slot','referringName','consentAccepted'];
     for (const k of required) {
-      if (!body[k]) return NextResponse.json({ error: `Missing field: ${k}` }, { status: 400 });
+      if (body[k] == null || body[k] === '') {
+        return NextResponse.json({ error: `Missing field: ${k}` }, { status: 400 });
+      }
     }
     if (body.consentAccepted !== true) {
       return NextResponse.json({ error: 'Consent is required' }, { status: 400 });
     }
 
     const adminDb = getAdminDb();
+
     const bookingRef = genRef(process.env.NEXT_PUBLIC_BOOKING_REF_PREFIX || 'G2G');
+
+    // Amount: baseline $65 -> 6500; package $199 -> 19900 (fallback to 6500)
+    const pkg = (body.packageType || '').toLowerCase();
+    const amountCents = pkg === 'package4' ? 19900 : 6500;
+
     const payload = {
       clientName: body.name,
       email: body.email,
       phone: body.phone || '',
       region: body.region,
-      time: body.slot,
+      time: body.slot,                    // legacy slot string
       venue: body.venue || body.venueAddress || '',
-      referringProfessional: { name: body.referringName, email: body.medicalEmail || null },
-      consent: { accepted: true, acceptedAt: new Date(), duration: body.consentDuration || 'Until Revoked' },
-      packageType: body.packageType || 'baseline',
-      allDates: body.allDates || [],
+      referringProfessional: { name: body.referringName || '' },
+      medicalEmail: body.medicalEmail || null,
+      consent: {
+        accepted: true,
+        acceptedAt: new Date(),
+        duration: body.consentDuration || 'Until Revoked',
+      },
+      // structured:
+      dateISO: body.dateISO || null,
+      start: body.start || null,
+      end: body.end || null,
+      venueAddress: body.venueAddress || body.venue || '',
+      packageType: pkg || 'baseline',
+      allDates: Array.isArray(body.allDates) ? body.allDates : (body.dateISO ? [body.dateISO] : []),
+
+      amountCents,
+      currency: 'NZD',
+
       bookingRef,
+      status: 'pending',
       createdAt: new Date(),
-      status: 'pending'
     };
-    await adminDb.collection('bookings').doc(bookingRef).set(payload, { merge: true });
 
-    // decide amount
-    const amountCents = payload.packageType === 'package4' ? 19900 : 6500;
+    await adminDb.collection('bookings').doc(bookingRef).set(payload);
 
-    // Call our Worldline create endpoint to obtain HPP URL
-    const createRes = await fetch(abs(origin, '/api/worldline/create'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bookingId: bookingRef,
-        amountCents,
-        currency: 'NZD',
-        reference: bookingRef,
-        successUrl: '/api/worldline/return?bid='+encodeURIComponent(bookingRef),
-        cancelUrl: '/api/worldline/return?bid='+encodeURIComponent(bookingRef)+'&cancel=1',
-        errorUrl: '/api/worldline/return?bid='+encodeURIComponent(bookingRef)+'&error=1'
-      })
-    });
-    const j = await createRes.json().catch(()=> ({}));
-    const redirectUrl = j?.redirectUrl || j?.paymentUrl || j?.url;
-    if (redirectUrl) {
-      return NextResponse.json({ ok: true, id: bookingRef, bookingRef, redirectUrl: redirectUrl });
-    }
+    // Build absolute redirect to the HPP generator
+    // (your /api/worldline/create route supports GET)
+    const redirectUrl = new URL(`/api/worldline/create?ref=${encodeURIComponent(bookingRef)}&amount=${amountCents}`, origin).toString();
 
-    // fallback: send to success so clients aren't stuck
-    return NextResponse.json({ ok:true, id: bookingRef, bookingRef, redirectUrl: abs(origin, '/success?ref='+encodeURIComponent(bookingRef)) });
+    return NextResponse.json({ ok: true, id: bookingRef, bookingRef, redirectUrl });
   } catch (e) {
-    return NextResponse.json({ error: 'server_error' }, { status: 500 });
+    console.error('POST /api/book error:', e);
+    // Always give the client somewhere to land
+    const ref = typeof e?.bookingRef === 'string' ? e.bookingRef : 'ERR';
+    const origin = new URL(req.url).origin;
+    const fallback = new URL(`/success?ref=${encodeURIComponent(ref)}`, origin).toString();
+    return NextResponse.json({ error: 'server_error', redirectUrl: fallback }, { status: 500 });
   }
 }
