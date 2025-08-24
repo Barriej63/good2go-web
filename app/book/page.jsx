@@ -24,7 +24,7 @@ export default function BookPage() {
     const data = await r.json();
     if (!r.ok || !data?.ok) throw new Error(data?.error || 'Booking failed');
 
-    const bookingRef = data.bookingRef;   // ✅ ensure we read this first
+    const bookingRef = data.bookingRef;   // store first
     const isPackage = selectedProduct === 'package';
     const amount = isPackage ? 19900 : 6500;   // cents
 

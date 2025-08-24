@@ -2,19 +2,6 @@
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-/**
- * Server page that receives ?ref=<bookingRef>&amount=<cents>
- * and auto-POSTs to Worldline Web Payments WPRequest.
- *
- * Required env:
- *   WORLDLINE_ENV=uat|prod
- *   WORLDLINE_MERCHANT_ID=14617             (your value)
- *   WORLDLINE_CURRENCY=NZD
- *   WORLDLINE_SUCCESS_URL=https://good2go-rth.com/success
- *   WORLDLINE_CANCEL_URL=https://good2go-rth.com/cancel
- *   WORLDLINE_ERROR_URL=https://good2go-rth.com/error
- */
-
 function wlEndpoint(env) {
   const e = String(env || '').toLowerCase();
   return e === 'uat'
@@ -49,12 +36,11 @@ export default async function PayRedirectPage({ searchParams }) {
     );
   }
 
-  // Minimal field set for Web Payments form post.
   const fields = {
     merchantId,
     amount,
     currency,
-    merchantReference: ref,  // maps to your booking ref
+    merchantReference: ref,
     returnUrl: successUrl,
     cancelUrl,
     errorUrl,
@@ -63,6 +49,7 @@ export default async function PayRedirectPage({ searchParams }) {
   return (
     <html>
       <body>
+        <h1>Redirecting to Worldline…</h1>
         <form id="wl-form" method="post" action={endpoint}>
           {Object.entries(fields).map(([k, v]) => (
             <input key={k} type="hidden" name={k} value={v} />
