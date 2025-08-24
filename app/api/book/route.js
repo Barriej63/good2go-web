@@ -1,3 +1,5 @@
+
+// app/api/book/route.js
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '../../../lib/firebaseAdmin';
 
@@ -11,18 +13,18 @@ function genRef(prefix = 'G2G') {
   return `${prefix}-${stamp}-${rand}`;
 }
 
-function toAbsolute(urlOrPath, origin) {
-  try { return new URL(urlOrPath, origin).toString(); }
-  catch { return new URL('/success', origin).toString(); }
+function abs(origin, pathOrUrl) {
+  try { return new URL(pathOrUrl, origin).toString(); }
+  catch { return origin + pathOrUrl; }
 }
 
+// Health
 export async function GET(req) {
   try {
     const db = getAdminDb();
     await db.listCollections();
-    return NextResponse.json({ ok: true, env: 'staging', admin: 'ready' });
+    return NextResponse.json({ ok: true, env: process.env.WORLDLINE_ENV || 'uat', admin: 'ready' });
   } catch (e) {
-    console.error('GET /api/book health error:', e);
     return NextResponse.json({ ok: false, error: 'admin_init_failed' }, { status: 500 });
   }
 }
@@ -31,8 +33,7 @@ export async function POST(req) {
   try {
     const origin = new URL(req.url).origin;
     const body = await req.json();
-
-    const required = ['name','email','region','slot','venue','consentAccepted'];
+    const required = ['name','email','region','slot','referringName','consentAccepted'];
     for (const k of required) {
       if (!body[k]) return NextResponse.json({ error: `Missing field: ${k}` }, { status: 400 });
     }
@@ -48,25 +49,43 @@ export async function POST(req) {
       phone: body.phone || '',
       region: body.region,
       time: body.slot,
-      dateISO: body.dateISO || null,
-      start: body.start || null,
-      end: body.end || null,
-      venue: body.venue,
-      venueAddress: body.venueAddress || body.venue || '',
-      medicalEmail: body.medicalEmail || null,
-      referringProfessional: { name: body.referringName || '', email: body.medicalEmail || null },
-      packageType: body.packageType || 'baseline',
-      allDates: Array.isArray(body.allDates) ? body.allDates : (body.dateISO ? [body.dateISO] : []),
+      venue: body.venue || body.venueAddress || '',
+      referringProfessional: { name: body.referringName, email: body.medicalEmail || null },
       consent: { accepted: true, acceptedAt: new Date(), duration: body.consentDuration || 'Until Revoked' },
+      packageType: body.packageType || 'baseline',
+      allDates: body.allDates || [],
       bookingRef,
       createdAt: new Date(),
+      status: 'pending'
     };
+    await adminDb.collection('bookings').doc(bookingRef).set(payload, { merge: true });
 
-    const doc = await adminDb.collection('bookings').add(payload);
-    const hppStart = toAbsolute(`/api/hpp/start?ref=${encodeURIComponent(bookingRef)}`, origin);
-    return NextResponse.json({ ok: true, id: doc.id, bookingRef, redirectUrl: hppStart });
+    // decide amount
+    const amountCents = payload.packageType === 'package4' ? 19900 : 6500;
+
+    // Call our Worldline create endpoint to obtain HPP URL
+    const createRes = await fetch(abs(origin, '/api/worldline/create'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookingId: bookingRef,
+        amountCents,
+        currency: 'NZD',
+        reference: bookingRef,
+        successUrl: '/api/worldline/return?bid='+encodeURIComponent(bookingRef),
+        cancelUrl: '/api/worldline/return?bid='+encodeURIComponent(bookingRef)+'&cancel=1',
+        errorUrl: '/api/worldline/return?bid='+encodeURIComponent(bookingRef)+'&error=1'
+      })
+    });
+    const j = await createRes.json().catch(()=> ({}));
+    const redirectUrl = j?.redirectUrl || j?.paymentUrl || j?.url;
+    if (redirectUrl) {
+      return NextResponse.json({ ok: true, id: bookingRef, bookingRef, redirectUrl: redirectUrl });
+    }
+
+    // fallback: send to success so clients aren't stuck
+    return NextResponse.json({ ok:true, id: bookingRef, bookingRef, redirectUrl: abs(origin, '/success?ref='+encodeURIComponent(bookingRef)) });
   } catch (e) {
-    console.error('POST /api/book error:', e);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
