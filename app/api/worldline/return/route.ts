@@ -13,14 +13,6 @@ function kv(input: URLSearchParams | string): Record<string,string> {
 const pickRef = (m:Record<string,string>) => m.Reference || m.reference || m.ref || m.merchantReference || null;
 const pickTx  = (m:Record<string,string>) => m.TransactionId || m.transactionId || m.txn || null;
 
-async function logDoc(kind: 'returns_log'|'returns_error', payload: any) {
-  try {
-    if (!db) return;
-    const id = Date.now() + '-' + Math.random().toString(36).slice(2,8);
-    await (db as any).collection(kind).doc(id).set({ ...payload, at: new Date().toISOString() });
-  } catch {}
-}
-
 function errInfo(e:any) {
   return {
     message: e?.message || String(e),
@@ -28,6 +20,14 @@ function errInfo(e:any) {
     name: e?.name || null,
     stack: (e?.stack || '').split('\n').slice(0,3).join('\n'),
   };
+}
+
+async function log(kind: 'returns_log'|'returns_error', payload: any) {
+  try {
+    if (!db) return;
+    const id = Date.now() + '-' + Math.random().toString(36).slice(2,8);
+    await (db as any).collection(kind).doc(id).set({ ...payload, at: new Date().toISOString() });
+  } catch {}
 }
 
 async function writePayment(map: Record<string,string>) {
@@ -42,11 +42,11 @@ async function writePayment(map: Record<string,string>) {
   return { tx, cents };
 }
 
-async function updateBooking(map: Record<string,string>) {
+async function updateBookingRootOnly(map: Record<string,string>) {
   if (!db) throw new Error('no_db');
   const ref = pickRef(map);
   if (!ref) return { found: false, path: null };
-  const q = await (db as any).collectionGroup('bookings').where('ref','==', ref).limit(1).get();
+  const q = await (db as any).collection('bookings').where('ref','==', ref).limit(1).get();
   if (q.empty) return { found: false, path: null };
   const bRef = q.docs[0].ref;
   const nowIso = new Date().toISOString();
@@ -74,15 +74,15 @@ export async function GET(req: NextRequest) {
   } catch (e:any) {
     report.ok = false;
     report.steps.paymentError = errInfo(e);
-    await logDoc('returns_error', { step: 'payment', map, error: report.steps.paymentError });
+    await log('returns_error', { step: 'payment', map, error: report.steps.paymentError });
   }
 
   try {
-    report.steps.booking = await updateBooking(map);
+    report.steps.booking = await updateBookingRootOnly(map);
   } catch (e:any) {
     report.ok = false;
     report.steps.bookingError = errInfo(e);
-    await logDoc('returns_error', { step: 'booking', map, error: report.steps.bookingError });
+    await log('returns_error', { step: 'booking', map, error: report.steps.bookingError });
   }
 
   if (debug) {
@@ -109,15 +109,15 @@ export async function POST(req: NextRequest) {
   } catch (e:any) {
     report.ok = false;
     report.steps.paymentError = errInfo(e);
-    await logDoc('returns_error', { step: 'payment', map, error: report.steps.paymentError });
+    await log('returns_error', { step: 'payment', map, error: report.steps.paymentError });
   }
 
   try {
-    report.steps.booking = await updateBooking(map);
+    report.steps.booking = await updateBookingRootOnly(map);
   } catch (e:any) {
     report.ok = false;
     report.steps.bookingError = errInfo(e);
-    await logDoc('returns_error', { step: 'booking', map, error: report.steps.bookingError });
+    await log('returns_error', { step: 'booking', map, error: report.steps.bookingError });
   }
 
   if (debug) {
