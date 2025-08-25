@@ -1,44 +1,42 @@
 // lib/firebaseAdminFallback.ts
-// Tries to obtain a Firestore instance either from your existing lib/firebaseAdmin
-// or by initializing firebase-admin from env vars.
-// No build-time import; dynamic import at runtime to avoid build failures if missing.
+let cached: any = null;
 
-export async function getFirestoreSafe() {
-  // Try your existing initializer first
+function getPrivateKey() {
+  const raw = process.env.FIREBASE_PRIVATE_KEY || '';
+  // Support both escaped "\n" and real newlines
+  return raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
+}
+
+export function getFirestoreFromAny(): FirebaseFirestore.Firestore | null {
+  if (cached) return cached;
+
+  // 1) Try project alias import if present
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require('@/lib/firebaseAdmin') || require('../lib/firebaseAdmin');
-    const admin = mod.default || mod;
-    if (admin?.firestore) {
-      const db = admin.firestore();
-      return { ok: true, db, source: 'project-lib' as const };
-    }
+    const adminAny = require('@/lib/firebaseAdmin') || require('../lib/firebaseAdmin');
+    const admin = adminAny.default || adminAny;
+    cached = admin.firestore();
+    return cached;
   } catch {}
-  // Fallback: dynamic import firebase-admin
+
+  // 2) Try direct firebase-admin init from env
   try {
-    const admin = await import('firebase-admin');
-    const apps = (admin as any).apps || (admin as any).default?.apps;
-    const hasApp = apps && apps.length;
-    if (!hasApp) {
-      const projectId = process.env.FIREBASE_PROJECT_ID;
-      const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-      let privateKey = process.env.FIREBASE_PRIVATE_KEY;
-      if (privateKey && privateKey.startsWith('"')) {
-        // Vercel can double-quote multiline secrets
-        privateKey = privateKey.replace(/^"|"$/g, '').replace(/\\n/g, '\n');
-      } else if (privateKey) {
-        privateKey = privateKey.replace(/\n/g, '\n');
-      }
-      if (!projectId || !clientEmail || !privateKey) {
-        return { ok:false, error:'missing_service_account_env' as const };
-      }
-      (admin as any).initializeApp({
-        credential: (admin as any).credential.cert({ projectId, clientEmail, privateKey }),
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const admin = require('firebase-admin');
+    const apps = admin.apps?.length ? admin.apps : admin.getApps?.() || [];
+    if (!apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey: getPrivateKey(),
+        }),
       });
     }
-    const db = (admin as any).firestore();
-    return { ok: true, db, source: 'fallback-admin' as const };
-  } catch (e:any) {
-    return { ok:false, error: 'firebase_admin_not_available', detail: e?.message || String(e) };
+    cached = admin.firestore();
+    return cached;
+  } catch (e) {
+    console.warn('⚠️ firebase-admin init failed:', (e as any)?.message || e);
+    return null;
   }
 }
