@@ -28,7 +28,7 @@ export async function GET(req: Request) {
 
     const gw = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/plain' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': '*/*' },
       body: formBody,
     });
 

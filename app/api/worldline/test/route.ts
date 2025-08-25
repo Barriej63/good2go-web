@@ -10,19 +10,20 @@ export async function GET() {
       username: process.env.WORLDLINE_USERNAME || '',
       password: process.env.WORLDLINE_PASSWORD || '',
       accountId: process.env.WORLDLINE_ACCOUNT_ID || '',
-      amountCents: 100, // $1.00
-      type: 'statuscheck',
-      reference: 'HEALTHCHECK',
+      amountCents: 100,
+      type: 'purchase',
+      reference: 'HLTHCHK',
       returnUrl: process.env.WORLDLINE_RETURN_URL || '',
       transactionSource: 'INTERNET',
     });
     const res = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'text/plain' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': '*/*' },
       body: formBody
     });
     const txt = await res.text();
-    return NextResponse.json({ ok: /^https?:\/\//.test(txt.trim()), status: res.status, sample: txt.slice(0, 400) }, { status: res.ok ? 200 : 502 });
+    const ok = /^https?:\/\//.test(txt.trim());
+    return NextResponse.json({ ok, status: res.status, sample: txt.slice(0, 400) }, { status: ok ? 200 : 502 });
   } catch (e:any) {
     return NextResponse.json({ ok:false, error: e?.message || 'server_error' }, { status: 500 });
   }
