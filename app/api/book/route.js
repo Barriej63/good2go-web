@@ -1,34 +1,65 @@
 import { NextResponse } from 'next/server';
+import { buildWPRequestBody, wpRequestUrl } from '@/lib/worldline';
+
 export const dynamic = 'force-dynamic';
 
-function pad(n){ return String(n).padStart(2,'0'); }
-function genRef(prefix='G2G'){
-  const d = new Date();
-  const stamp = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  const rand = Math.random().toString(36).slice(2,5).toUpperCase();
-  return `${prefix}-${stamp}-${rand}`;
-}
+/**
+ * Accepts booking payload, creates a bookingRef, and immediately
+ * creates a Worldline HPP session, returning redirectUrl so the
+ * existing booking UI can redirect without any UI changes.
+ */
+export async function POST(req) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const pkg = body?.packageType || body?.pkg || 'baseline';
+    const region = body?.region || '';
+    const dateISO = body?.dateISO || body?.slot || '';
+    const amountCents = pkg === 'package' ? 19900 : 6500;
 
-export async function POST(req){
-  try{
-    const payload = await req.json().catch(()=>({}));
-    // Accept multiple shapes from the booking UI
-    const name = payload?.clientName || payload?.name || payload?.fullName || null;
-    const email = payload?.clientEmail || payload?.email || null;
-    const region = payload?.region || payload?.selectedRegion || null;
-    const slotId = payload?.slotId || payload?.id || payload?.bookingId || null;
-    const amount = payload?.amount || payload?.price || payload?.amountCents || null;
+    // Generate a reference that matches your previous pattern
+    const dt = new Date();
+    const ref = body?.bookingRef || `G2G-${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,'0')}${String(dt.getDate()).padStart(2,'0')}-${String(dt.getHours()).padStart(2,'0')}${String(dt.getMinutes()).padStart(2,'0')}${String(dt.getSeconds()).padStart(2,'0')}-${Math.random().toString(36).slice(2,5).toUpperCase()}`;
 
-    const warnings = [];
-    if(!name) warnings.push('missing_name');
-    if(!email) warnings.push('missing_email');
-    if(!slotId) warnings.push('missing_slotId');
+    // Build HPP request
+    const endpoint = wpRequestUrl(process.env.WORLDLINE_ENV);
+    const formBody = buildWPRequestBody({
+      username: process.env.WORLDLINE_USERNAME || '',
+      password: process.env.WORLDLINE_PASSWORD || '',
+      accountId: process.env.WORLDLINE_ACCOUNT_ID || '',
+      amountCents,
+      type: 'purchase',
+      reference: ref.slice(0, 50),
+      particular: (region || 'Good2Go').slice(0, 50),
+      returnUrl: process.env.WORLDLINE_RETURN_URL || '',
+      transactionSource: 'INTERNET',
+    });
 
-    // We no longer fail hard on missing fields; we still generate a bookingRef so payment can proceed.
-    const bookingRef = genRef('G2G');
+    const gw = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': '*/*' },
+      body: formBody
+    });
+    const txt = await gw.text();
 
-    return NextResponse.json({ok:true, bookingRef, used:{name,email,region,slotId,amount}, warnings});
-  }catch(e){
-    return NextResponse.json({ok:false, error: e?.message || 'server_error'}, {status:500});
+    const m = txt.trim().match(/https?:[^<\s"]+/i) || txt.trim().match(/<string[^>]*>(https?:[^<]+)<\/string>/i);
+    const redirectUrl = m ? m[1] || m[0] : '';
+
+    if (!redirectUrl) {
+      return NextResponse.json({ ok:false, error: 'worldline_no_redirect', sample: txt.slice(0, 200), bookingRef: ref }, { status: 502 });
+    }
+
+    // Return in the shape the UI expects
+    return NextResponse.json({
+      ok: true,
+      bookingRef: ref,
+      paymentUrl: redirectUrl,
+      redirectUrl,
+      url: redirectUrl,
+      attachedTo: 'standalone',
+      region,
+      dateISO
+    });
+  } catch (e) {
+    return NextResponse.json({ ok:false, error: e?.message || 'server_error' }, { status: 500 });
   }
 }
