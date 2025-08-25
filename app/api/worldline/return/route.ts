@@ -1,7 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
 
-export const dynamic = 'force-dynamic';
+let db: FirebaseFirestore.Firestore | null = null;
+try {
+  const adminAny = require('@/lib/firebaseAdmin') || require('../../../../lib/firebaseAdmin');
+  const admin = adminAny.default || adminAny;
+  db = admin.firestore();
+} catch (e) {
+  console.warn('⚠️ Firestore Admin not loaded');
+}
+
+async function sendEmail(opts: {to: string; subject: string; html: string; text?: string}) {
+  try {
+    const key = process.env.SENDGRID_API_KEY;
+    const from = process.env.SENDGRID_FROM || 'no-reply@good2go.local';
+    if (!key) throw new Error('SENDGRID_API_KEY missing');
+    const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: opts.to }] }],
+        from: { email: from },
+        subject: opts.subject,
+        content: [{ type: 'text/html', value: opts.html }]
+      })
+    });
+    return { ok: res.status === 202, status: res.status };
+  } catch (e:any) {
+    console.warn('SendGrid send failed:', e?.message || e);
+    return { ok:false, error:e?.message || String(e) };
+  }
+}
 
 function parseKV(s: string): Record<string,string> {
   const out: Record<string,string> = {};
@@ -9,167 +37,111 @@ function parseKV(s: string): Record<string,string> {
   for (const [k,v] of usp.entries()) out[k] = v;
   return out;
 }
-function extractFromRequest(req: NextRequest): Record<string,string> {
-  const url = new URL(req.url);
-  const m: Record<string,string> = {};
-  url.searchParams.forEach((v,k)=> { m[k] = v; });
-  return m;
-}
+
 function pickRef(m: Record<string,string>): string | null {
   return m['Reference'] || m['reference'] || m['ref'] || m['merchantReference'] || null;
 }
-function toCents(amount: string|undefined): number | null {
-  if (!amount) return null;
-  const n = Number(amount.replace(/[^0-9.]/g,''));
-  if (!isFinite(n)) return null;
-  return Math.round(n*100);
+function pickTx(m: Record<string,string>): string | null {
+  return m['TransactionId'] || m['transactionId'] || m['txn'] || null;
 }
 
-async function sendViaSendGrid(to: string, subject: string, html: string) {
-  const apiKey = process.env.SENDGRID_API_KEY || '';
-  const from = process.env.SENDGRID_FROM || '';
-  if (!apiKey || !from) return { ok:false, skipped:true, reason:'missing_sendgrid_env' };
-  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: from.match(/<(.+)>/)?.[1] || from, name: from.replace(/<.*>/,'').trim() },
-      subject,
-      content: [{ type: 'text/html', value: html }]
-    })
-  });
-  return { ok: res.status >= 200 && res.status < 300, status: res.status };
+async function logReturn(map: Record<string,string>, method: string) {
+  if (!db) return;
+  const id = (pickTx(map) || 'noTx') + '-' + Date.now();
+  try {
+    await (db as any).collection('returns_log').doc(id).set({
+      method, map, createdAt: new Date()
+    });
+  } catch (e:any) {
+    console.warn('logReturn failed:', e?.message || e);
+  }
 }
 
-function renderEmailHtml(map: Record<string,string>, booking: any) {
+async function persist(map: Record<string,string>) {
+  if (!db) return;
   const ref = pickRef(map) || 'UNKNOWN';
-  const date = booking?.date || '';
-  const start = booking?.slot?.start || '';
-  const end = booking?.slot?.end || '';
-  const region = booking?.region || '';
-  const venue = booking?.venueAddress || '';
-  return `
-  <div style="font-family:system-ui">
+  const tx = pickTx(map) || 'UNKNOWN';
+  const amount = map['Amount'] || '';
+  const status = map['Status'] || '';
+  const now = new Date().toISOString();
+  try {
+    const batch = (db as any).batch();
+    const payDoc = (db as any).collection('payments').doc(tx);
+    batch.set(payDoc, { reference: ref, tx, amount, status, raw: map, returnedAt: now }, { merge: true });
+    const bookRef = (db as any).collection('bookings').doc(ref);
+    batch.set(bookRef, { paid:true, paidAt: now, status:'paid', amountCents: Math.round(parseFloat(amount||'0')*100), worldline: map }, { merge: true });
+    const bookPay = bookRef.collection('payments').doc(tx);
+    batch.set(bookPay, { reference: ref, tx, amount, status, raw: map, returnedAt: now }, { merge: true });
+    await batch.commit();
+  } catch (e:any) {
+    console.error('persist failed:', e?.message || e);
+  }
+}
+
+function renderEmail(map: Record<string,string>, booking: any) {
+  const ref = pickRef(map) || 'UNKNOWN';
+  return `<div style="font-family:system-ui">
     <h2>Booking Confirmed</h2>
-    <p>Thanks! Your payment was successful.</p>
+    <p>Thanks, your payment was processed.</p>
     <ul>
       <li><strong>Reference:</strong> ${ref}</li>
-      <li><strong>Date:</strong> ${date}</li>
-      <li><strong>Time:</strong> ${start}${end ? '–'+end : ''}</li>
-      <li><strong>Region:</strong> ${region}</li>
-      <li><strong>Venue:</strong> ${venue}</li>
-      <li><strong>Amount:</strong> ${map['Amount'] || ''}</li>
-      <li><strong>TransactionId:</strong> ${map['TransactionId'] || ''}</li>
-      <li><strong>Receipt:</strong> ${map['ReceiptNumber'] || ''}</li>
-      <li><strong>Card:</strong> ${map['CardType'] || ''} ${map['CardNumber'] || ''}</li>
+      <li><strong>Date:</strong> ${booking?.date || ''}</li>
+      <li><strong>Time:</strong> ${booking?.slot?.start || ''} - ${booking?.slot?.end || ''}</li>
+      <li><strong>Region:</strong> ${booking?.region || ''}</li>
+      <li><strong>Venue:</strong> ${booking?.venueAddress || ''}</li>
+      <li><strong>Amount:</strong> ${map['Amount']||''}</li>
+      <li><strong>Status:</strong> ${map['Status']||''}</li>
     </ul>
   </div>`;
 }
 
-async function loadBooking(db: FirebaseFirestore.Firestore, reference: string) {
-  const snap = await (db as any).collection('bookings').doc(reference).get();
-  return snap.exists ? snap.data() : null;
-}
+async function handle(map: Record<string,string>, method: string, host: string, debug=false) {
+  await logReturn(map, method);
+  await persist(map);
 
-async function persist(db: FirebaseFirestore.Firestore, map: Record<string,string>, booking: any) {
-  const ref = pickRef(map) || 'UNKNOWN';
-  const txId = map['TransactionId'] || 'UNKNOWN';
-  const nowIso = new Date().toISOString();
-  const amountCents = toCents(map['Amount'] || '');
-
-  const worldline = {
-    env: process.env.WORLDLINE_ENV || '',
-    returnedAt: nowIso,
-    ...map
-  };
-
-  // Update booking
-  const bookingPatch: any = {
-    status: 'paid',
-    paid: true,
-    paidAt: nowIso,
-    worldline,
-  };
-  if (amountCents != null) bookingPatch.amountCents = amountCents;
-
-  const batch = (db as any).batch();
-  const bookingRef = (db as any).collection('bookings').doc(ref);
-  batch.set(bookingRef, bookingPatch, { merge: true });
-
-  // payments/<txId>
-  const payDoc = (db as any).collection('payments').doc(txId);
-  batch.set(payDoc, {
-    reference: ref,
-    createdAt: nowIso,
-    amountCents,
-    raw: map,
-    status: map['Status'] || '',
-  }, { merge: true });
-
-  // bookings/<ref>/payments/<txId>
-  const nested = bookingRef.collection('payments').doc(txId);
-  batch.set(nested, {
-    reference: ref,
-    createdAt: nowIso,
-    amountCents,
-    raw: map,
-    status: map['Status'] || '',
-  }, { merge: true });
-
-  await batch.commit();
-}
-
-async function handle(req: NextRequest, map: Record<string,string>) {
+  // find booking email
+  let emailTo = process.env.BOOKING_NOTIFY_TO || '';
   const ref = pickRef(map);
-  const host = req.nextUrl.host;
+  if (db && ref) {
+    try {
+      const snap = await (db as any).collection('bookings').doc(ref).get();
+      if (snap.exists) {
+        const data = snap.data();
+        const custEmail = data.email || data.clientEmail || data.customerEmail || data.contactEmail;
+        if (custEmail) emailTo = custEmail;
+        if (emailTo) await sendEmail({
+          to: emailTo,
+          subject: 'Booking Confirmed',
+          html: renderEmail(map, data)
+        });
+      }
+    } catch (e:any) { console.warn('lookup email failed', e?.message||e); }
+  }
+
+  if (debug) return NextResponse.json({ ok:true, method, ref, tx: pickTx(map), received: map }, { status:200 });
+
   const successUrl = new URL('/success', process.env.SITE_BASE_URL || 'https://'+host);
   if (ref) successUrl.searchParams.set('ref', ref);
-
-  const dbGet = await getFirestoreSafe();
-  if (!dbGet.ok || !dbGet.db) {
-    console.error('Firestore unavailable:', dbGet);
-    if (req.nextUrl.searchParams.get('debug') === '1') {
-      return NextResponse.json({ ok:false, step:'firestore_init', detail: dbGet }, { status: 500 });
-    }
-    return NextResponse.redirect(successUrl.toString(), { status: 302 });
-  }
-  const db = dbGet.db;
-
-  try {
-    const booking = ref ? await loadBooking(db, ref) : null;
-    await persist(db, map, booking);
-
-    // Email
-    let to =
-      (booking && (booking.email || booking.clientEmail || booking.customerEmail || booking.contactEmail)) ||
-      process.env.BOOKING_NOTIFY_TO || '';
-
-    if (to) {
-      const html = renderEmailHtml(map, booking);
-      const sent = await sendViaSendGrid(to, `Booking confirmed — ${ref}`, html);
-      if (!sent.ok) console.warn('SendGrid failed', sent);
-    }
-
-    if (req.nextUrl.searchParams.get('debug') === '1') {
-      return NextResponse.json({ ok:true, ref, persisted:true, emailed: !!to });
-    }
-    return NextResponse.redirect(successUrl.toString(), { status: 302 });
-  } catch (e:any) {
-    console.error('Return handle error:', e?.message || e);
-    if (req.nextUrl.searchParams.get('debug') === '1') {
-      return NextResponse.json({ ok:false, error:e?.message||String(e) }, { status: 500 });
-    }
-    return NextResponse.redirect(successUrl.toString(), { status: 302 });
-  }
+  return NextResponse.redirect(successUrl.toString(), { status:302 });
 }
 
 export async function GET(req: NextRequest) {
-  const map = extractFromRequest(req);
-  return handle(req, map);
+  try {
+    const map = Object.fromEntries(new URL(req.url).searchParams.entries());
+    const debug = new URL(req.url).searchParams.has('debug');
+    return await handle(map, 'GET', req.nextUrl.host, debug);
+  } catch (e:any) {
+    return NextResponse.json({ ok:false, error:e?.message||'server_error', step:'GET' }, { status:500 });
+  }
 }
+
 export async function POST(req: NextRequest) {
-  const raw = await req.text();
-  const map = parseKV(raw);
-  return handle(req, map);
+  try {
+    const raw = await req.text();
+    const map = parseKV(raw);
+    const debug = (new URL(req.url)).searchParams.has('debug');
+    return await handle(map, 'POST', req.nextUrl.host, debug);
+  } catch (e:any) {
+    return NextResponse.json({ ok:false, error:e?.message||'server_error', step:'POST' }, { status:500 });
+  }
 }
