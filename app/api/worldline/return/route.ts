@@ -57,25 +57,20 @@ async function logReturn(map: Record<string,string>, method: string) {
   }
 }
 
-async function persist(map: Record<string,string>) {
-  if (!db) return;
-  const ref = pickRef(map) || 'UNKNOWN';
-  const tx = pickTx(map) || 'UNKNOWN';
-  const amount = map['Amount'] || '';
-  const status = map['Status'] || '';
-  const now = new Date().toISOString();
+/** Find the real booking doc even if nested like bookings/{tenant}/bookings/{ref} */
+async function resolveBookingDocPathByRef(reference: string) {
+  if (!db) return null;
   try {
-    const batch = (db as any).batch();
-    const payDoc = (db as any).collection('payments').doc(tx);
-    batch.set(payDoc, { reference: ref, tx, amount, status, raw: map, returnedAt: now }, { merge: true });
-    const bookRef = (db as any).collection('bookings').doc(ref);
-    batch.set(bookRef, { paid:true, paidAt: now, status:'paid', amountCents: Math.round(parseFloat(amount||'0')*100), worldline: map }, { merge: true });
-    const bookPay = bookRef.collection('payments').doc(tx);
-    batch.set(bookPay, { reference: ref, tx, amount, status, raw: map, returnedAt: now }, { merge: true });
-    await batch.commit();
+    const q = await (db as any).collectionGroup('bookings').where('ref', '==', reference).limit(1).get();
+    if (!q.empty) return q.docs[0].ref;
+    // Fallback: top-level /bookings/{reference}
+    const top = (db as any).collection('bookings').doc(reference);
+    const tSnap = await top.get();
+    if (tSnap.exists) return top;
   } catch (e:any) {
-    console.error('persist failed:', e?.message || e);
+    console.warn('resolveBookingDocPathByRef failed:', e?.message || e);
   }
+  return null;
 }
 
 function renderEmail(map: Record<string,string>, booking: any) {
@@ -95,18 +90,55 @@ function renderEmail(map: Record<string,string>, booking: any) {
   </div>`;
 }
 
-async function handle(map: Record<string,string>, method: string, host: string, debug=false) {
+async function persist(map: Record<string,string>) {
+  if (!db) return { ok:false, reason:'no_db' };
+  const ref = pickRef(map) || 'UNKNOWN';
+  const tx = pickTx(map) || 'UNKNOWN';
+  const amount = map['Amount'] || '';
+  const status = map['Status'] || '';
+  const nowIso = new Date().toISOString();
+
+  try {
+    // payments/
+    const batch = (db as any).batch();
+    const payDoc = (db as any).collection('payments').doc(tx);
+    batch.set(payDoc, { reference: ref, tx, amountCents: Math.round(parseFloat(amount||'0')*100), createdAt: nowIso, raw: map }, { merge: true });
+
+    // bookings path (supports nested structure using collectionGroup)
+    const bookingRef = await resolveBookingDocPathByRef(ref);
+    if (bookingRef) {
+      batch.set(bookingRef, { paid: true, paidAt: nowIso, status: 'paid', amountCents: Math.round(parseFloat(amount||'0')*100), worldline: map }, { merge: true });
+      const subPay = bookingRef.collection('payments').doc(tx);
+      batch.set(subPay, { reference: ref, tx, amount, status, raw: map, createdAt: nowIso }, { merge: true });
+    } else {
+      // create a top-level fallback for traceability
+      const top = (db as any).collection('bookings').doc(ref);
+      batch.set(top, { paid: true, paidAt: nowIso, status: 'paid', amountCents: Math.round(parseFloat(amount||'0')*100), worldline: map }, { merge: true });
+      const topSub = top.collection('payments').doc(tx);
+      batch.set(topSub, { reference: ref, tx, amount, status, raw: map, createdAt: nowIso }, { merge: true });
+    }
+
+    await batch.commit();
+    return { ok:true };
+  } catch (e:any) {
+    console.error('persist failed:', e?.message || e);
+    return { ok:false, error:e?.message || String(e) };
+  }
+}
+
+async function handle(map: Record[string,string], method: string, host: string, debug=false) {
   await logReturn(map, method);
   await persist(map);
 
-  // find booking email
+  // pick email to send to
   let emailTo = process.env.BOOKING_NOTIFY_TO || '';
   const ref = pickRef(map);
   if (db && ref) {
     try {
-      const snap = await (db as any).collection('bookings').doc(ref).get();
-      if (snap.exists) {
-        const data = snap.data();
+      const docRef = await resolveBookingDocPathByRef(ref);
+      if (docRef) {
+        const snap = await docRef.get();
+        const data = snap.data() || {};
         const custEmail = data.email || data.clientEmail || data.customerEmail || data.contactEmail;
         if (custEmail) emailTo = custEmail;
         if (emailTo) await sendEmail({
@@ -115,11 +147,10 @@ async function handle(map: Record<string,string>, method: string, host: string, 
           html: renderEmail(map, data)
         });
       }
-    } catch (e:any) { console.warn('lookup email failed', e?.message||e); }
+    } catch (e:any) { console.warn('email lookup failed', e?.message||e); }
   }
 
   if (debug) return NextResponse.json({ ok:true, method, ref, tx: pickTx(map), received: map }, { status:200 });
-
   const successUrl = new URL('/success', process.env.SITE_BASE_URL || 'https://'+host);
   if (ref) successUrl.searchParams.set('ref', ref);
   return NextResponse.redirect(successUrl.toString(), { status:302 });
@@ -127,20 +158,21 @@ async function handle(map: Record<string,string>, method: string, host: string, 
 
 export async function GET(req: NextRequest) {
   try {
-    const map = Object.fromEntries(new URL(req.url).searchParams.entries());
-    const debug = new URL(req.url).searchParams.has('debug');
-    return await handle(map, 'GET', req.nextUrl.host, debug);
+    const url = new URL(req.url);
+    const map = Object.fromEntries(url.searchParams.entries());
+    const debug = url.searchParams.has('debug');
+    return await handle(map as any, 'GET', req.nextUrl.host, debug);
   } catch (e:any) {
     return NextResponse.json({ ok:false, error:e?.message||'server_error', step:'GET' }, { status:500 });
   }
 }
-
 export async function POST(req: NextRequest) {
   try {
+    const url = new URL(req.url);
+    const debug = url.searchParams.has('debug');
     const raw = await req.text();
     const map = parseKV(raw);
-    const debug = (new URL(req.url)).searchParams.has('debug');
-    return await handle(map, 'POST', req.nextUrl.host, debug);
+    return await handle(map as any, 'POST', req.nextUrl.host, debug);
   } catch (e:any) {
     return NextResponse.json({ ok:false, error:e?.message||'server_error', step:'POST' }, { status:500 });
   }
