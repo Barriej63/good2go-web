@@ -34,10 +34,8 @@ const pickTx  = (m:Record<string,string>) => m.TransactionId || m.transactionId 
 
 async function resolveBookingDocPathByRef(reference: string) {
   if (!db) return null;
-  // Try collectionGroup so nested bookings/{tenant}/bookings/{ref} are found
   const q = await (db as any).collectionGroup('bookings').where('ref', '==', reference).limit(1).get();
   if (!q.empty) return q.docs[0].ref;
-  // Fallback: top-level /bookings/{reference}
   const top = (db as any).collection('bookings').doc(reference);
   const tSnap = await top.get();
   if (tSnap.exists) return top;
@@ -77,18 +75,15 @@ async function persist(map: Record<string,string>) {
   const cents = Math.round(parseFloat(amount || '0') * 100) || 0;
 
   const batch = (db as any).batch();
-  // payments
   const payDoc = (db as any).collection('payments').doc(tx);
   batch.set(payDoc, { reference: ref, tx, amountCents: cents, createdAt: nowIso, raw: map }, { merge: true });
 
-  // booking (resolved path)
   const bookingRef: any = await resolveBookingDocPathByRef(ref);
   if (bookingRef) {
     batch.set(bookingRef, { paid: true, paidAt: nowIso, status: 'paid', amountCents: cents, worldline: map }, { merge: true });
     const subPay = bookingRef.collection('payments').doc(tx);
     batch.set(subPay, { reference: ref, tx, amount, status, raw: map, createdAt: nowIso }, { merge: true });
   }
-
   await batch.commit();
 }
 
@@ -96,7 +91,6 @@ async function handle(map: Record<string,string>, method: string, host: string, 
   await logReturn(map, method);
   await persist(map);
 
-  // email
   let emailTo = process.env.BOOKING_NOTIFY_TO || '';
   const ref = pickRef(map);
   if (db && ref) {
@@ -125,7 +119,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const url = new URL(req.url);
   const debug = url.searchParams.has('debug');
-  const raw = await req.text();                 // HPP posts x-www-form-urlencoded
+  const raw = await req.text();
   const map = parseKV(raw);
   return await handle(map, 'POST', req.nextUrl.host, debug);
 }

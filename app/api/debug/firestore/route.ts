@@ -1,20 +1,29 @@
-import { NextResponse } from 'next/server';
-import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
+import { NextRequest, NextResponse } from 'next/server';
+import { getFirestoreFromAny } from '@/lib/firebaseAdminFallback';
+
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  const dbGet = await getFirestoreSafe();
-  if (!dbGet.ok || !dbGet.db) {
-    return NextResponse.json({ ok:false, detail: dbGet }, { status: 500 });
-  }
+export async function GET(req: NextRequest) {
   try {
-    // Simple round-trip: create a temp doc and read it back
-    const coll = (dbGet.db as any).collection('_healthchecks');
-    const id = 'hc-' + Date.now();
-    await coll.doc(id).set({ createdAt: new Date().toISOString() });
-    const snap = await coll.doc(id).get();
-    return NextResponse.json({ ok:true, wrote: !!snap.exists, id });
+    const db: any = getFirestoreFromAny();
+    const ok = !!db;
+    let projectId: string | null = null;
+
+    try {
+      const adminAny = require('firebase-admin');
+      const admin = adminAny.default || adminAny;
+      projectId = admin.app().options.projectId || process.env.FIREBASE_PROJECT_ID || null;
+    } catch {}
+
+    const refQ = new URL(req.url).searchParams.get('ref') || '';
+    let bookingPath = null;
+    if (db && refQ) {
+      const snap = await db.collectionGroup('bookings').where('ref','==', refQ).limit(1).get();
+      if (!snap.empty) bookingPath = snap.docs[0].ref.path;
+    }
+
+    return NextResponse.json({ ok, projectId, refQueried: refQ || undefined, resolvedBookingPath: bookingPath, envProject: process.env.FIREBASE_PROJECT_ID || null });
   } catch (e:any) {
-    return NextResponse.json({ ok:false, error: e?.message || String(e) }, { status: 500 });
+    return NextResponse.json({ ok:false, error: e?.message || 'server_error' }, { status: 500 });
   }
 }
