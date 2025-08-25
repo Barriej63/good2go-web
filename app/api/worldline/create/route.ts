@@ -3,6 +3,15 @@ import { buildWPRequestBody, wpRequestUrl } from '@/lib/worldline';
 
 export const dynamic = 'force-dynamic';
 
+function extractUrl(text: string): string | null {
+  const trimmed = text.trim();
+  // Case 1: plain URL
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  // Case 2: XML-wrapped <string>URL</string>
+  const m = trimmed.match(/>(https?:[^<]+)</i);
+  return m ? m[1] : null;
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -21,7 +30,7 @@ export async function GET(req: Request) {
       accountId: process.env.WORLDLINE_ACCOUNT_ID || '',
       amountCents,
       type: 'purchase',
-      reference: ref,
+      reference: ref.slice(0,50),
       returnUrl: process.env.WORLDLINE_RETURN_URL || '',
       transactionSource: 'INTERNET',
     });
@@ -33,11 +42,11 @@ export async function GET(req: Request) {
     });
 
     const txt = await gw.text();
-    const isUrl = /^https?:\/\//i.test(txt.trim());
-    if (!gw.ok || !isUrl) {
+    const redirectUrl = extractUrl(txt);
+    if (!gw.ok || !redirectUrl) {
       return NextResponse.json({ ok: false, status: gw.status, endpoint, sample: txt.slice(0, 400) }, { status: 502 });
     }
-    return NextResponse.json({ ok: true, redirectUrl: txt.trim() });
+    return NextResponse.json({ ok: true, redirectUrl });
   } catch (e:any) {
     return NextResponse.json({ ok:false, error: e?.message || 'server_error' }, { status: 500 });
   }
