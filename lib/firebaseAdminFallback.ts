@@ -28,7 +28,8 @@ export function getFirestoreFromAny(): FirebaseFirestore.Firestore | null {
     cached = admin.firestore();
     return cached;
   } catch (e) {
-    console.warn('⚠️ firebase-admin init failed:', e?.message || e);
+    const msg = (e && (e as any).message) ? (e as any).message : String(e);
+    console.warn('⚠️ firebase-admin init failed:', msg);
     return null;
   }
 }
