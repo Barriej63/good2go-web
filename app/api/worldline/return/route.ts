@@ -1,25 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-// ---- Firestore Admin (expected at lib/firebaseAdmin) ----
-let db: FirebaseFirestore.Firestore | null = null;
-try {
-  const adminAny = require('@/lib/firebaseAdmin') || require('../../../../lib/firebaseAdmin');
-  const admin = adminAny.default || adminAny;
-  db = admin.firestore();
-} catch (e) {
-  console.warn('⚠️ Firestore Admin not loaded. Skipping DB writes.');
-}
+import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
 
 export const dynamic = 'force-dynamic';
 
-// ---- Utilities ----
 function parseKV(s: string): Record<string,string> {
   const out: Record<string,string> = {};
   const usp = new URLSearchParams(s);
   for (const [k,v] of usp.entries()) out[k] = v;
   return out;
 }
-
 function extractFromRequest(req: NextRequest): Record<string,string> {
   const url = new URL(req.url);
   const m: Record<string,string> = {};
@@ -29,198 +18,158 @@ function extractFromRequest(req: NextRequest): Record<string,string> {
 function pickRef(m: Record<string,string>): string | null {
   return m['Reference'] || m['reference'] || m['ref'] || m['merchantReference'] || null;
 }
-function isoNow(): string {
-  return new Date().toISOString();
+function toCents(amount: string|undefined): number | null {
+  if (!amount) return null;
+  const n = Number(amount.replace(/[^0-9.]/g,''));
+  if (!isFinite(n)) return null;
+  return Math.round(n*100);
 }
 
-// ---- Booking lookup ----
-async function getBookingByRef(reference: string): Promise<any | null> {
-  if (!db) return null;
-  try {
-    const snap = await (db as any).collection('bookings').doc(reference).get();
-    if (!snap.exists) return null;
-    return snap.data() || null;
-  } catch (e:any) {
-    console.warn('Lookup booking failed:', e?.message || e);
-    return null;
-  }
-}
-
-// ---- Firestore writes (idempotent) ----
-async function persistPayment(map: Record<string,string>) {
-  if (!db) return { ok:false, skipped:true, reason:'no_db' };
-  const ref = pickRef(map) || 'UNKNOWN';
-  const txId = map['TransactionId'] || map['transaction_id'] || map['txn'] || 'UNKNOWN';
-  const amount = map['Amount'] || map['amount'] || '';
-  const status = map['Status'] || map['status'] || '';
-  const receipt = map['ReceiptNumber'] || map['receipt'] || '';
-
-  const doc = {
-    reference: ref,
-    transactionId: txId,
-    amount,
-    status,
-    receipt,
-    raw: map,
-    createdAt: new Date(),
-  };
-
-  try {
-    const payDocRef = (db as any).collection('payments').doc(txId);
-    const existing = await payDocRef.get();
-    const batch = (db as any).batch();
-    if (!existing.exists) {
-      batch.set(payDocRef, doc, { merge: true });
-    }
-
-    const bookRef = (db as any).collection('bookings').doc(ref);
-    batch.set(bookRef, {
-      paid: true,
-      paidAt: isoNow(),
-      status: 'paid',
-      amountCents: amount ? Math.round(parseFloat(String(amount)) * 100) : undefined,
-      worldline: {
-        env: process.env.WORLDLINE_ENV || 'uat',
-        returnedAt: isoNow(),
-        TransactionId: txId,
-        ReceiptNumber: receipt,
-        Status: status,
-        Amount: amount,
-        CardType: map['CardType'] || '',
-        CardNumber: map['CardNumber'] || '',
-        AuthCode: map['AuthCode'] || '',
-        AcquirerResponseCode: map['AcquirerResponseCode'] || '',
-      }
-    }, { merge: true });
-
-    const nested = (db as any).collection('bookings').doc(ref).collection('payments').doc(txId);
-    if (!existing.exists) {
-      batch.set(nested, doc, { merge: true });
-    }
-
-    await batch.commit();
-    return { ok:true, ref, txId };
-  } catch (e:any) {
-    console.error('Persist payment failed:', e?.message || e);
-    return { ok:false, error:e?.message || String(e) };
-  }
-}
-
-// ---- Email via SendGrid v3 (no external deps) ----
-async function sendViaSendGrid(to: string, subject: string, html: string, text?: string) {
+async function sendViaSendGrid(to: string, subject: string, html: string) {
   const apiKey = process.env.SENDGRID_API_KEY || '';
   const from = process.env.SENDGRID_FROM || '';
-  if (!apiKey || !from || !to) {
-    return { ok:false, skipped:true, reason:'missing_env_or_to' };
-  }
-  const body = {
-    personalizations: [{ to: [{ email: to }] }],
-    from: { email: from.replace(/.*<([^>]+)>.*/, '$1'), name: from.includes('<') ? from.split('<')[0].trim() : from },
-    subject,
-    content: [
-      { type: 'text/plain', value: text || '' },
-      { type: 'text/html', value: html }
-    ]
-  };
+  if (!apiKey || !from) return { ok:false, skipped:true, reason:'missing_sendgrid_env' };
   const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: to }] }],
+      from: { email: from.match(/<(.+)>/)?.[1] || from, name: from.replace(/<.*>/,'').trim() },
+      subject,
+      content: [{ type: 'text/html', value: html }]
+    })
   });
-  if (!res.ok) {
-    const err = await res.text().catch(()=>'');
-    console.warn('SendGrid error', res.status, err.slice(0,300));
-    return { ok:false, status: res.status, err: err.slice(0,300) };
-  }
-  return { ok:true };
+  return { ok: res.status >= 200 && res.status < 300, status: res.status };
 }
 
-function buildEmailHTML(booking: any, map: Record<string,string>) {
+function renderEmailHtml(map: Record<string,string>, booking: any) {
   const ref = pickRef(map) || 'UNKNOWN';
   const date = booking?.date || '';
   const start = booking?.slot?.start || '';
   const end = booking?.slot?.end || '';
   const region = booking?.region || '';
-  const venue = booking?.venueAddress || booking?.venue || '';
-  const amount = map['Amount'] || '';
-  const status = map['Status'] || '';
-  const txId = map['TransactionId'] || '';
-  const receipt = map['ReceiptNumber'] || '';
-  const card = `${map['CardType'] || ''} ${map['CardNumber'] || ''}`.trim();
-
+  const venue = booking?.venueAddress || '';
   return `
   <div style="font-family:system-ui">
-    <h2 style="margin:0 0 8px">Booking confirmed</h2>
-    <p style="margin:0 0 12px">Thanks! Your payment was successful.</p>
-    <table cellpadding="6" style="border-collapse:collapse">
-      <tr><td><b>Reference</b></td><td>${ref}</td></tr>
-      <tr><td><b>Date</b></td><td>${date}</td></tr>
-      <tr><td><b>Time</b></td><td>${start}${end ? '–'+end : ''}</td></tr>
-      <tr><td><b>Region</b></td><td>${region}</td></tr>
-      <tr><td><b>Venue</b></td><td>${venue}</td></tr>
-      <tr><td><b>Amount</b></td><td>${amount}</td></tr>
-      <tr><td><b>Status</b></td><td>${status}</td></tr>
-      <tr><td><b>Transaction</b></td><td>${txId}</td></tr>
-      <tr><td><b>Receipt</b></td><td>${receipt}</td></tr>
-      <tr><td><b>Card</b></td><td>${card}</td></tr>
-    </table>
-    <p style="margin-top:16px">We look forward to seeing you.</p>
+    <h2>Booking Confirmed</h2>
+    <p>Thanks! Your payment was successful.</p>
+    <ul>
+      <li><strong>Reference:</strong> ${ref}</li>
+      <li><strong>Date:</strong> ${date}</li>
+      <li><strong>Time:</strong> ${start}${end ? '–'+end : ''}</li>
+      <li><strong>Region:</strong> ${region}</li>
+      <li><strong>Venue:</strong> ${venue}</li>
+      <li><strong>Amount:</strong> ${map['Amount'] || ''}</li>
+      <li><strong>TransactionId:</strong> ${map['TransactionId'] || ''}</li>
+      <li><strong>Receipt:</strong> ${map['ReceiptNumber'] || ''}</li>
+      <li><strong>Card:</strong> ${map['CardType'] || ''} ${map['CardNumber'] || ''}</li>
+    </ul>
   </div>`;
 }
 
-function buildEmailText(booking: any, map: Record<string,string>) {
-  const ref = pickRef(map) || 'UNKNOWN';
-  const date = booking?.date || '';
-  const start = booking?.slot?.start || '';
-  const end = booking?.slot?.end || '';
-  const region = booking?.region || '';
-  const venue = booking?.venueAddress || booking?.venue || '';
-  return `Booking confirmed\nReference: ${ref}\nDate: ${date}\nTime: ${start}${end ? '-'+end : ''}\nRegion: ${region}\nVenue: ${venue}`;
+async function loadBooking(db: FirebaseFirestore.Firestore, reference: string) {
+  const snap = await (db as any).collection('bookings').doc(reference).get();
+  return snap.exists ? snap.data() : null;
 }
 
-async function handle(map: Record<string,string>, host: string) {
-  // Persist
-  await persistPayment(map);
+async function persist(db: FirebaseFirestore.Firestore, map: Record<string,string>, booking: any) {
+  const ref = pickRef(map) || 'UNKNOWN';
+  const txId = map['TransactionId'] || 'UNKNOWN';
+  const nowIso = new Date().toISOString();
+  const amountCents = toCents(map['Amount'] || '');
 
-  // Email
+  const worldline = {
+    env: process.env.WORLDLINE_ENV || '',
+    returnedAt: nowIso,
+    ...map
+  };
+
+  // Update booking
+  const bookingPatch: any = {
+    status: 'paid',
+    paid: true,
+    paidAt: nowIso,
+    worldline,
+  };
+  if (amountCents != null) bookingPatch.amountCents = amountCents;
+
+  const batch = (db as any).batch();
+  const bookingRef = (db as any).collection('bookings').doc(ref);
+  batch.set(bookingRef, bookingPatch, { merge: true });
+
+  // payments/<txId>
+  const payDoc = (db as any).collection('payments').doc(txId);
+  batch.set(payDoc, {
+    reference: ref,
+    createdAt: nowIso,
+    amountCents,
+    raw: map,
+    status: map['Status'] || '',
+  }, { merge: true });
+
+  // bookings/<ref>/payments/<txId>
+  const nested = bookingRef.collection('payments').doc(txId);
+  batch.set(nested, {
+    reference: ref,
+    createdAt: nowIso,
+    amountCents,
+    raw: map,
+    status: map['Status'] || '',
+  }, { merge: true });
+
+  await batch.commit();
+}
+
+async function handle(req: NextRequest, map: Record<string,string>) {
   const ref = pickRef(map);
-  const booking = ref ? await getBookingByRef(ref) : null;
-  const to =
-    (booking?.email || booking?.clientEmail || booking?.customerEmail || booking?.contactEmail ||
-      process.env.BOOKING_NOTIFY_TO || '');
-  if (to) {
-    await sendViaSendGrid(
-      to,
-      `Booking confirmed — ${ref}`,
-      buildEmailHTML(booking, map),
-      buildEmailText(booking, map)
-    );
-  }
-
-  // Redirect
+  const host = req.nextUrl.host;
   const successUrl = new URL('/success', process.env.SITE_BASE_URL || 'https://'+host);
   if (ref) successUrl.searchParams.set('ref', ref);
-  return NextResponse.redirect(successUrl.toString(), { status: 302 });
+
+  const dbGet = await getFirestoreSafe();
+  if (!dbGet.ok || !dbGet.db) {
+    console.error('Firestore unavailable:', dbGet);
+    if (req.nextUrl.searchParams.get('debug') === '1') {
+      return NextResponse.json({ ok:false, step:'firestore_init', detail: dbGet }, { status: 500 });
+    }
+    return NextResponse.redirect(successUrl.toString(), { status: 302 });
+  }
+  const db = dbGet.db;
+
+  try {
+    const booking = ref ? await loadBooking(db, ref) : null;
+    await persist(db, map, booking);
+
+    // Email
+    let to =
+      (booking && (booking.email || booking.clientEmail || booking.customerEmail || booking.contactEmail)) ||
+      process.env.BOOKING_NOTIFY_TO || '';
+
+    if (to) {
+      const html = renderEmailHtml(map, booking);
+      const sent = await sendViaSendGrid(to, `Booking confirmed — ${ref}`, html);
+      if (!sent.ok) console.warn('SendGrid failed', sent);
+    }
+
+    if (req.nextUrl.searchParams.get('debug') === '1') {
+      return NextResponse.json({ ok:true, ref, persisted:true, emailed: !!to });
+    }
+    return NextResponse.redirect(successUrl.toString(), { status: 302 });
+  } catch (e:any) {
+    console.error('Return handle error:', e?.message || e);
+    if (req.nextUrl.searchParams.get('debug') === '1') {
+      return NextResponse.json({ ok:false, error:e?.message||String(e) }, { status: 500 });
+    }
+    return NextResponse.redirect(successUrl.toString(), { status: 302 });
+  }
 }
 
 export async function GET(req: NextRequest) {
-  try {
-    const map = extractFromRequest(req);
-    return await handle(map, req.nextUrl.host);
-  } catch (e:any) {
-    return NextResponse.json({ ok:false, error: e?.message || 'server_error', step:'GET' }, { status: 500 });
-  }
+  const map = extractFromRequest(req);
+  return handle(req, map);
 }
-
 export async function POST(req: NextRequest) {
-  try {
-    const raw = await req.text();
-    const map = parseKV(raw);
-    return await handle(map, req.nextUrl.host);
-  } catch (e:any) {
-    return NextResponse.json({ ok:false, error: e?.message || 'server_error', step:'POST' }, { status: 500 });
-  }
+  const raw = await req.text();
+  const map = parseKV(raw);
+  return handle(req, map);
 }
