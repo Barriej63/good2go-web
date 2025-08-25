@@ -1,1 +1,1 @@
-Generated 2025-08-25T05:13:15.183779Z — book route returns clean redirectUrl.
+Generated 2025-08-25T05:48:34.517734Z\n- /api/worldline/return -> redirects to /success with ref\n- /pay/redirect server page -> redirects to /success with ref\n
