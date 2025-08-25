@@ -10,8 +10,16 @@ function kv(input: URLSearchParams | string): Record<string,string> {
   for (const [k,v] of params.entries()) out[k] = v;
   return out;
 }
-const pickRef = (m:Record<string,string>) => m.Reference || m.reference || m.ref || m.merchantReference || null;
-const pickTx  = (m:Record<string,string>) => m.TransactionId || m.transactionId || m.txn || null;
+
+const pickRef = (m:Record<string,string>) =>
+  m.Reference || m.reference || m.ref || m.merchantReference || null;
+const pickTx  = (m:Record<string,string>) =>
+  m.TransactionId || m.transactionId || m.txn || null;
+
+function centsFromAmount(a: string | undefined) {
+  const n = a ? parseFloat(a) : 0;
+  return Math.round((isNaN(n) ? 0 : n) * 100);
+}
 
 function errInfo(e:any) {
   return {
@@ -22,11 +30,11 @@ function errInfo(e:any) {
   };
 }
 
-async function log(kind: 'returns_log'|'returns_error', payload: any) {
+async function safeLog(col: string, payload: any) {
   try {
     if (!db) return;
     const id = Date.now() + '-' + Math.random().toString(36).slice(2,8);
-    await (db as any).collection(kind).doc(id).set({ ...payload, at: new Date().toISOString() });
+    await (db as any).collection(col).doc(id).set({ ...payload, at: new Date().toISOString() });
   } catch {}
 }
 
@@ -34,97 +42,158 @@ async function writePayment(map: Record<string,string>) {
   if (!db) throw new Error('no_db');
   const tx = pickTx(map) || 'UNKNOWN';
   const ref = pickRef(map);
-  const amount = map['Amount'] || '0';
-  const cents = Math.round(parseFloat(amount) * 100) || 0;
+  const cents = centsFromAmount(map['Amount']);
   const nowIso = new Date().toISOString();
-  const doc = (db as any).collection('payments').doc(tx);
-  await doc.set({ reference: ref, tx, amountCents: cents, createdAt: nowIso, raw: map }, { merge: true });
+  await (db as any).collection('payments').doc(tx).set({
+    reference: ref, tx, amountCents: cents, createdAt: nowIso, raw: map,
+    status: map['Status'] || null,
+  }, { merge: true });
   return { tx, cents };
 }
 
-async function updateBookingRootOnly(map: Record<string,string>) {
+// Try multiple strategies to resolve the booking doc
+async function resolveBookingDoc(map: Record<string,string>) {
   if (!db) throw new Error('no_db');
   const ref = pickRef(map);
-  if (!ref) return { found: false, path: null };
-  const q = await (db as any).collection('bookings').where('ref','==', ref).limit(1).get();
-  if (q.empty) return { found: false, path: null };
-  const bRef = q.docs[0].ref;
+  if (!ref) return { found:false, path:null };
+
+  // 1) Direct doc id
+  const direct = await (db as any).collection('bookings').doc(ref).get();
+  if (direct.exists) return { found:true, path: direct.ref.path, ref: direct.ref };
+
+  // 2) Field 'ref'
+  const q1 = await (db as any).collection('bookings').where('ref','==', ref).limit(1).get();
+  if (!q1.empty) return { found:true, path:q1.docs[0].ref.path, ref:q1.docs[0].ref };
+
+  // 3) Field 'reference' (alt naming)
+  const q2 = await (db as any).collection('bookings').where('reference','==', ref).limit(1).get();
+  if (!q2.empty) return { found:true, path:q2.docs[0].ref.path, ref:q2.docs[0].ref };
+
+  return { found:false, path:null };
+}
+
+async function updateBooking(map: Record<string,string>) {
+  if (!db) throw new Error('no_db');
+  const res = await resolveBookingDoc(map);
+  if (!res.found || !res.ref) return { found:false, path:null };
+
+  const bRef = res.ref;
   const nowIso = new Date().toISOString();
-  const amount = map['Amount'] || '0';
-  const cents = Math.round(parseFloat(amount) * 100) || 0;
-  await bRef.set({ paid: true, paidAt: nowIso, status: 'paid', amountCents: cents, worldline: map }, { merge: true });
+  const cents = centsFromAmount(map['Amount']);
   const tx = pickTx(map) || 'UNKNOWN';
-  await bRef.collection('payments').doc(tx).set({
-    reference: ref, tx, amount, status: map['Status'] || '', raw: map, createdAt: nowIso
+
+  await bRef.set({
+    paid: true, paidAt: nowIso, status: 'paid', amountCents: cents, worldline: map
   }, { merge: true });
-  return { found: true, path: bRef.path, tx };
+
+  await bRef.collection('payments').doc(tx).set({
+    reference: pickRef(map), tx, amount: map['Amount'] || null,
+    status: map['Status'] || null, raw: map, createdAt: nowIso
+  }, { merge: true });
+
+  return { found:true, path: bRef.path, tx };
+}
+
+async function maybeEmail(map: Record<string,string>) {
+  try {
+    if (process.env.RETURN_NO_EMAIL === '1') return;
+    if (!db) return;
+    const refStr = pickRef(map);
+    if (!refStr) return;
+    const res = await resolveBookingDoc(map);
+    if (!res.found || !res.ref) return;
+    const snap = await res.ref.get();
+    const data = snap.exists ? snap.data() : null;
+    const email =
+      data?.email || data?.clientEmail || data?.customerEmail ||
+      data?.contactEmail || process.env.BOOKING_NOTIFY_TO;
+    if (!email) return;
+
+    const key = process.env.SENDGRID_API_KEY;
+    const from = process.env.SENDGRID_FROM || 'no-reply@good2go.local';
+    if (!key) return;
+
+    const html = `<div style="font-family:system-ui">
+      <h2>Booking Confirmed</h2>
+      <p>Thanks, your payment was processed.</p>
+      <ul>
+        <li><strong>Reference:</strong> ${refStr}</li>
+        <li><strong>Date:</strong> ${data?.date || ''}</li>
+        <li><strong>Time:</strong> ${data?.slot?.start || ''} - ${data?.slot?.end || ''}</li>
+        <li><strong>Region:</strong> ${data?.region || ''}</li>
+        <li><strong>Venue:</strong> ${data?.venueAddress || ''}</li>
+        <li><strong>Amount:</strong> ${map['Amount']||''}</li>
+        <li><strong>Status:</strong> ${map['Status']||''}</li>
+      </ul>
+    </div>`;
+
+    await fetch('https://api.sendgrid.com/v3/mail/send', {
+      method: 'POST',
+      headers: { 'Authorization': \`Bearer \${key}\`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email }] }],
+        from: { email: from },
+        subject: 'Booking Confirmed',
+        content: [{ type: 'text/html', value: html }]
+      })
+    });
+  } catch {}
+}
+
+async function handle(map: Record<string,string>, method: string, host: string, debug: boolean) {
+  const report: any = { ok:true, method, ref: pickRef(map), tx: pickTx(map), steps:{} };
+
+  try {
+    report.steps.payment = await writePayment(map);
+  } catch (e:any) {
+    report.ok = false;
+    report.steps.paymentError = errInfo(e);
+    await safeLog('returns_error', { step: 'payment', map, error: report.steps.paymentError });
+  }
+
+  try {
+    report.steps.booking = await updateBooking(map);
+  } catch (e:any) {
+    report.ok = false;
+    report.steps.bookingError = errInfo(e);
+    await safeLog('returns_error', { step: 'booking', map, error: report.steps.bookingError });
+  }
+
+  if (!report.steps?.booking?.found) {
+    await safeLog('returns_orphans', { map, ref: pickRef(map) });
+  } else {
+    // Email only if we actually resolved a booking
+    await maybeEmail(map);
+  }
+
+  if (debug) return NextResponse.json(report);
+
+  const successUrl = new URL('/success', process.env.SITE_BASE_URL || 'https://' + host);
+  if (report.ref) successUrl.searchParams.set('ref', report.ref);
+  return NextResponse.redirect(successUrl.toString(), { status: 302 });
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const map = kv(url.searchParams);
-  const debug = url.searchParams.has('debug');
-  const ref = pickRef(map);
-  const tx = pickTx(map);
-
-  const report: any = { ok: true, method: 'GET', ref, tx, steps: {} };
-
   try {
-    report.steps.payment = await writePayment(map);
+    const url = new URL(req.url);
+    const map = kv(url.searchParams);
+    const debug = url.searchParams.has('debug');
+    return await handle(map, 'GET', req.nextUrl.host, debug);
   } catch (e:any) {
-    report.ok = false;
-    report.steps.paymentError = errInfo(e);
-    await log('returns_error', { step: 'payment', map, error: report.steps.paymentError });
+    await safeLog('returns_error', { when:'GET', error: errInfo(e) });
+    return NextResponse.json({ ok:false, error:'server_error', detail: errInfo(e) }, { status: 200 });
   }
-
-  try {
-    report.steps.booking = await updateBookingRootOnly(map);
-  } catch (e:any) {
-    report.ok = false;
-    report.steps.bookingError = errInfo(e);
-    await log('returns_error', { step: 'booking', map, error: report.steps.bookingError });
-  }
-
-  if (debug) {
-    return NextResponse.json(report);
-  }
-
-  const successUrl = new URL('/success', process.env.SITE_BASE_URL || 'https://' + req.nextUrl.host);
-  if (ref) successUrl.searchParams.set('ref', ref);
-  return NextResponse.redirect(successUrl.toString(), { status: 302 });
 }
 
 export async function POST(req: NextRequest) {
-  const url = new URL(req.url);
-  const body = await req.text();
-  const map = kv(body);
-  const debug = url.searchParams.has('debug');
-  const ref = pickRef(map);
-  const tx = pickTx(map);
-
-  const report: any = { ok: true, method: 'POST', ref, tx, steps: {} };
-
   try {
-    report.steps.payment = await writePayment(map);
+    const url = new URL(req.url);
+    const debug = url.searchParams.has('debug');
+    const raw = await req.text();
+    const map = kv(raw);
+    return await handle(map, 'POST', req.nextUrl.host, debug);
   } catch (e:any) {
-    report.ok = false;
-    report.steps.paymentError = errInfo(e);
-    await log('returns_error', { step: 'payment', map, error: report.steps.paymentError });
+    await safeLog('returns_error', { when:'POST', error: errInfo(e) });
+    return NextResponse.json({ ok:false, error:'server_error', detail: errInfo(e) }, { status: 200 });
   }
-
-  try {
-    report.steps.booking = await updateBookingRootOnly(map);
-  } catch (e:any) {
-    report.ok = false;
-    report.steps.bookingError = errInfo(e);
-    await log('returns_error', { step: 'booking', map, error: report.steps.bookingError });
-  }
-
-  if (debug) {
-    return NextResponse.json(report);
-  }
-
-  const successUrl = new URL('/success', process.env.SITE_BASE_URL || 'https://' + req.nextUrl.host);
-  if (ref) successUrl.searchParams.set('ref', ref);
-  return NextResponse.redirect(successUrl.toString(), { status: 302 });
 }
