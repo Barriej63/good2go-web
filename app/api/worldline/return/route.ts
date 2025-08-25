@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getFirestoreFromAny } from '@/lib/firebaseAdminFallback';
 
-let db: FirebaseFirestore.Firestore | null = null;
-try {
-  const adminAny = require('@/lib/firebaseAdmin') || require('../../../../lib/firebaseAdmin');
-  const admin = adminAny.default || adminAny;
-  db = admin.firestore();
-} catch (e) {
-  console.warn('⚠️ Firestore Admin not loaded');
-}
+let db = getFirestoreFromAny();
 
 async function sendEmail(opts: {to: string; subject: string; html: string; text?: string}) {
   try {
@@ -35,28 +29,15 @@ function parseKV(s: string): Record<string,string> {
   for (const [k,v] of usp.entries()) out[k] = v;
   return out;
 }
+const pickRef = (m:Record<string,string>) => m.Reference || m.reference || m.ref || m.merchantReference || null;
+const pickTx  = (m:Record<string,string>) => m.TransactionId || m.transactionId || m.txn || null;
 
-function pickRef(m: Record<string,string>): string | null {
-  return m['Reference'] || m['reference'] || m['ref'] || m['merchantReference'] || null;
-}
-function pickTx(m: Record<string,string>): string | null {
-  return m['TransactionId'] || m['transactionId'] || m['txn'] || null;
-}
-
-async function logReturn(map: Record<string,string>, method: string) {
-  if (!db) return;
-  const id = (pickTx(map) || 'noTx') + '-' + Date.now();
-  await (db as any).collection('returns_log').doc(id).set({
-    method, map, createdAt: new Date()
-  });
-}
-
-/** Find booking doc even if nested like bookings/{tenant}/bookings/{ref} */
 async function resolveBookingDocPathByRef(reference: string) {
   if (!db) return null;
+  // Try collectionGroup so nested bookings/{tenant}/bookings/{ref} are found
   const q = await (db as any).collectionGroup('bookings').where('ref', '==', reference).limit(1).get();
   if (!q.empty) return q.docs[0].ref;
-  // Fallback: top-level
+  // Fallback: top-level /bookings/{reference}
   const top = (db as any).collection('bookings').doc(reference);
   const tSnap = await top.get();
   if (tSnap.exists) return top;
@@ -80,6 +61,12 @@ function renderEmail(map: Record<string,string>, booking: any) {
   </div>`;
 }
 
+async function logReturn(map: Record<string,string>, method: string) {
+  if (!db) return;
+  const id = (pickTx(map) || 'noTx') + '-' + Date.now();
+  await (db as any).collection('returns_log').doc(id).set({ method, map, createdAt: new Date() });
+}
+
 async function persist(map: Record<string,string>) {
   if (!db) return;
   const ref = pickRef(map) || 'UNKNOWN';
@@ -94,7 +81,7 @@ async function persist(map: Record<string,string>) {
   const payDoc = (db as any).collection('payments').doc(tx);
   batch.set(payDoc, { reference: ref, tx, amountCents: cents, createdAt: nowIso, raw: map }, { merge: true });
 
-  // booking
+  // booking (resolved path)
   const bookingRef: any = await resolveBookingDocPathByRef(ref);
   if (bookingRef) {
     batch.set(bookingRef, { paid: true, paidAt: nowIso, status: 'paid', amountCents: cents, worldline: map }, { merge: true });
@@ -109,7 +96,7 @@ async function handle(map: Record<string,string>, method: string, host: string, 
   await logReturn(map, method);
   await persist(map);
 
-  // send email
+  // email
   let emailTo = process.env.BOOKING_NOTIFY_TO || '';
   const ref = pickRef(map);
   if (db && ref) {
@@ -119,11 +106,7 @@ async function handle(map: Record<string,string>, method: string, host: string, 
       const data = snap.data() || {};
       const custEmail = data.email || data.clientEmail || data.customerEmail || data.contactEmail;
       if (custEmail) emailTo = custEmail;
-      if (emailTo) await sendEmail({
-        to: emailTo,
-        subject: 'Booking Confirmed',
-        html: renderEmail(map, data)
-      });
+      if (emailTo) await sendEmail({ to: emailTo, subject: 'Booking Confirmed', html: renderEmail(map, data) });
     }
   }
 
@@ -139,11 +122,10 @@ export async function GET(req: NextRequest) {
   const debug = url.searchParams.has('debug');
   return await handle(map, 'GET', req.nextUrl.host, debug);
 }
-
 export async function POST(req: NextRequest) {
   const url = new URL(req.url);
   const debug = url.searchParams.has('debug');
-  const raw = await req.text();
+  const raw = await req.text();                 // HPP posts x-www-form-urlencoded
   const map = parseKV(raw);
   return await handle(map, 'POST', req.nextUrl.host, debug);
 }
