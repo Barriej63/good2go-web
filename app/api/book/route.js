@@ -1,65 +1,66 @@
-import { NextResponse } from 'next/server';
-import { buildWPRequestBody, wpRequestUrl } from '@/lib/worldline';
-
+// Server Route: /api/book — returns { ok, bookingRef, redirectUrl } (also: url, paymentUrl)
 export const dynamic = 'force-dynamic';
 
-/**
- * Accepts booking payload, creates a bookingRef, and immediately
- * creates a Worldline HPP session, returning redirectUrl so the
- * existing booking UI can redirect without any UI changes.
- */
+function extractUrl(raw) {
+  if (!raw) return null;
+  const t = String(raw).trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  const m = t.match(/<string[^>]*>(.*?)<\/string>/i);
+  if (m && /^https?:\/\//i.test(m[1].trim())) return m[1].trim();
+  const any = t.match(/https?:\/\/[^\s"<>]+/i);
+  return any ? any[0] : null;
+}
+
+function pickAmountCents(payload) {
+  const pkg = (payload?.packageType || payload?.package || payload?.plan || 'baseline').toLowerCase();
+  if (pkg.includes('concussion') || pkg.includes('package') || pkg.includes('premium')) return 19900;
+  return 6500;
+}
+
+function makeRef() {
+  const d = new Date();
+  const pad = (n)=>String(n).padStart(2,'0');
+  const ts = `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}-${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+  const rand = Math.random().toString(36).slice(2,5).toUpperCase();
+  return `G2G-${ts}-${rand}`;
+}
+
 export async function POST(req) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const pkg = body?.packageType || body?.pkg || 'baseline';
-    const region = body?.region || '';
-    const dateISO = body?.dateISO || body?.slot || '';
-    const amountCents = pkg === 'package' ? 19900 : 6500;
+    const payload = await req.json().catch(()=> ({}));
+    const bookingRef = payload?.ref || payload?.reference || makeRef();
+    const amountCents = payload?.amountCents ?? (payload?.amount ? Math.round(parseFloat(String(payload.amount))*100) : pickAmountCents(payload));
 
-    // Generate a reference that matches your previous pattern
-    const dt = new Date();
-    const ref = body?.bookingRef || `G2G-${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,'0')}${String(dt.getDate()).padStart(2,'0')}-${String(dt.getHours()).padStart(2,'0')}${String(dt.getMinutes()).padStart(2,'0')}${String(dt.getSeconds()).padStart(2,'0')}-${Math.random().toString(36).slice(2,5).toUpperCase()}`;
+    const params = new URLSearchParams();
+    params.set('username', process.env.WORLDLINE_USERNAME || '');
+    params.set('password', process.env.WORLDLINE_PASSWORD || '');
+    params.set('account_id', process.env.WORLDLINE_ACCOUNT_ID || '');
+    params.set('cmd', '_xclick');
+    params.set('type', 'purchase');
+    params.set('amount', (Math.max(0, Math.round(amountCents))/100).toFixed(2));
+    params.set('reference', String(bookingRef).slice(0,50));
+    const ret = process.env.WORLDLINE_RETURN_URL || '';
+    params.set('return_url', ret);
+    params.set('transaction_source', 'INTERNET');
 
-    // Build HPP request
-    const endpoint = wpRequestUrl(process.env.WORLDLINE_ENV);
-    const formBody = buildWPRequestBody({
-      username: process.env.WORLDLINE_USERNAME || '',
-      password: process.env.WORLDLINE_PASSWORD || '',
-      accountId: process.env.WORLDLINE_ACCOUNT_ID || '',
-      amountCents,
-      type: 'purchase',
-      reference: ref.slice(0, 50),
-      particular: (region || 'Good2Go').slice(0, 50),
-      returnUrl: process.env.WORLDLINE_RETURN_URL || '',
-      transactionSource: 'INTERNET',
-    });
+    const env = (process.env.WORLDLINE_ENV || 'uat').toLowerCase();
+    const base = (env === 'production' || env === 'prod') ? 'https://secure.paymarkclick.co.nz' : 'https://uat.paymarkclick.co.nz';
+    const endpoint = base + '/api/webpayments/paymentservice/rest/WPRequest';
 
-    const gw = await fetch(endpoint, {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': '*/*' },
-      body: formBody
+      body: params.toString()
     });
-    const txt = await gw.text();
 
-    const m = txt.trim().match(/https?:[^<\s"]+/i) || txt.trim().match(/<string[^>]*>(https?:[^<]+)<\/string>/i);
-    const redirectUrl = m ? m[1] || m[0] : '';
-
-    if (!redirectUrl) {
-      return NextResponse.json({ ok:false, error: 'worldline_no_redirect', sample: txt.slice(0, 200), bookingRef: ref }, { status: 502 });
+    const txt = await res.text();
+    const url = extractUrl(txt);
+    if (!res.ok || !url) {
+      return new Response(JSON.stringify({ ok:false, error:'worldline_no_redirect', status: res.status, sample: txt.slice(0,400) }), { status: 502, headers: { 'Content-Type':'application/json' } });
     }
 
-    // Return in the shape the UI expects
-    return NextResponse.json({
-      ok: true,
-      bookingRef: ref,
-      paymentUrl: redirectUrl,
-      redirectUrl,
-      url: redirectUrl,
-      attachedTo: 'standalone',
-      region,
-      dateISO
-    });
+    return new Response(JSON.stringify({ ok:true, bookingRef, redirectUrl: url, url, paymentUrl: url }), { status: 200, headers: { 'Content-Type':'application/json' } });
   } catch (e) {
-    return NextResponse.json({ ok:false, error: e?.message || 'server_error' }, { status: 500 });
+    return new Response(JSON.stringify({ ok:false, error: e?.message || 'server_error' }), { status: 500, headers: { 'Content-Type':'application/json' } });
   }
 }
