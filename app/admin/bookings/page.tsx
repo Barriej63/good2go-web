@@ -7,7 +7,16 @@ function dollars(cents: number | null) {
   return (cents/100).toFixed(2);
 }
 
-export default function AdminBookingsNoSWR() {
+function StatusChip({ status }: { status?: string }) {
+  const s = (status || '').toLowerCase();
+  let cls = 'bg-gray-200 text-gray-800';
+  if (s === 'paid') cls = 'bg-green-100 text-green-800';
+  else if (s === 'pending') cls = 'bg-amber-100 text-amber-800';
+  else if (s === 'failed' || s === 'cancelled' || s === 'canceled') cls = 'bg-red-100 text-red-800';
+  return <span className={`px-2 py-0.5 rounded text-xs ${cls}`}>{status || '—'}</span>;
+}
+
+export default function AdminBookings() {
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
   const token = params.get('token') || '';
   const [items, setItems] = useState<any[]>([]);
@@ -15,6 +24,9 @@ export default function AdminBookingsNoSWR() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [search, setSearch] = useState('');
+  const [recResult, setRecResult] = useState<string>('');
+  const [recRunning, setRecRunning] = useState(false);
   const timer = useRef<any>(null);
 
   async function fetchData() {
@@ -42,19 +54,55 @@ export default function AdminBookingsNoSWR() {
     return () => clearInterval(timer.current);
   }, [limit]);
 
-  const totalCount = useMemo(() => items.length, [items]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((b:any) => {
+      const hay = [
+        b.id, b.ref, b.name, b.email, b.region, b.status, b.date, b.start, b.end
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [items, search]);
+
+  const totalCount = items.length;
+  const showingCount = filtered.length;
+
+  async function reconcile() {
+    if (!token) { alert('Missing ADMIN_TOKEN'); return; }
+    const lim = prompt('Reconcile latest how many payments? (default 500)', '500') || '500';
+    const n = parseInt(lim) || 500;
+    setRecRunning(true);
+    setRecResult('');
+    try {
+      const res = await fetch(`/api/admin/reconcile?limit=${n}${token ? `&token=${encodeURIComponent(token)}` : ''}`, { method: 'POST' });
+      const j = await res.json();
+      if (j.ok) {
+        setRecResult(`updated: ${j.updated}, skipped: ${j.skipped}, missingBooking: ${j.missingBooking}, errors: ${j.errors}`);
+        fetchData();
+      } else {
+        setRecResult(`failed: ${j.error || 'unknown error'}`);
+      }
+    } catch (e:any) {
+      setRecResult(`failed: ${String(e)}`);
+    } finally {
+      setRecRunning(false);
+    }
+  }
 
   return (
-    <main className="p-6 max-w-6xl mx-auto">
+    <main className="p-6 max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">Admin · Bookings</h1>
       <p className="text-amber-700 bg-amber-50 border border-amber-200 p-2 rounded mb-4">
-        ⚠️ This page uses token-only access (<code>ADMIN_TOKEN</code>). Add proper auth/roles when convenient.
+        ⚠️ Token-only access (<code>ADMIN_TOKEN</code>).
       </p>
 
-      <div className="text-sm text-gray-600 mb-4 flex items-center gap-4">
-        <div>Showing latest <strong>{totalCount}</strong> bookings. Auto-refresh every <strong>15s</strong>.</div>
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="text-sm text-gray-700">
+          Showing <strong>{showingCount}</strong> of <strong>{totalCount}</strong> (auto-refresh 15s)
+        </div>
         <div className="flex items-center gap-2">
-          <label>Limit:</label>
+          <label className="text-sm">Limit:</label>
           <select value={limit} onChange={e => setLimit(parseInt(e.target.value))} className="border p-1 rounded">
             <option value={200}>200</option>
             <option value={1000}>1,000</option>
@@ -63,7 +111,12 @@ export default function AdminBookingsNoSWR() {
             <option value={10000}>10,000</option>
           </select>
         </div>
-        <div className="ml-auto text-gray-700">Last updated: <span className="font-medium">{lastUpdated || '—'}</span></div>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" className="border rounded px-2 py-1 w-64"/>
+        <button onClick={reconcile} disabled={recRunning} className={`rounded px-3 py-1 text-white ${recRunning ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+          {recRunning ? 'Reconciling…' : 'Reconcile'}
+        </button>
+        <div className="text-xs text-gray-600">{recResult}</div>
+        <div className="text-sm text-gray-700 ml-auto">Last updated: <span className="font-medium">{lastUpdated || '—'}</span></div>
       </div>
 
       {error && <div className="p-3 mb-4 border rounded bg-red-50 text-red-800">Error: {error}</div>}
@@ -86,7 +139,7 @@ export default function AdminBookingsNoSWR() {
             </tr>
           </thead>
           <tbody>
-            {items.map((b:any) => (
+            {filtered.map((b:any) => (
               <tr key={b.id} className="border-t">
                 <td className="p-2">{b.createdAt}</td>
                 <td className="p-2">{b.date}</td>
@@ -94,13 +147,13 @@ export default function AdminBookingsNoSWR() {
                 <td className="p-2">{b.name}</td>
                 <td className="p-2">{b.email}</td>
                 <td className="p-2">{b.region}</td>
-                <td className="p-2">{b.status}</td>
+                <td className="p-2"><StatusChip status={b.status} /></td>
                 <td className="p-2 text-right">${dollars(b.amountCents)}</td>
                 <td className="p-2">{b.ref}</td>
                 <td className="p-2">{b.id}</td>
               </tr>
             ))}
-            {items.length === 0 && !loading && (
+            {filtered.length === 0 && !loading && (
               <tr><td colSpan={10} className="p-4">No bookings.</td></tr>
             )}
           </tbody>
