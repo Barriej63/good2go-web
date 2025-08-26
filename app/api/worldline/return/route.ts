@@ -86,7 +86,6 @@ async function updateBookingIfPossible(db: FirebaseFirestore.Firestore, map: Ret
   const bRef = db.collection('bookings').doc(bookingId);
   const snap = await bRef.get();
   if (!snap.exists) return { updated:false };
-
   const updates: any = {
     ref: refOrId,
     status: 'paid',
@@ -95,7 +94,6 @@ async function updateBookingIfPossible(db: FirebaseFirestore.Firestore, map: Ret
   };
   const cents = centsFromAmount(map['Amount'] || null);
   if (cents != null) updates.amountCents = cents;
-
   const tx = map['TransactionId'] || null;
   await bRef.set(updates, { merge: true });
   if (tx) {
