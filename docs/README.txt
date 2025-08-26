@@ -1,23 +1,13 @@
-Good2Go Worldline Create Shim
-Generated: 2025-08-26T00:18:25.917762Z
+Good2Go Admin Auto-Refresh Bookings + Feed
+Generated: 2025-08-26T00:30:15.798045Z
 
 Adds:
-- app/api/worldline/create-shim/route.ts
+- app/api/admin/bookings-feed/route.ts
+- app/admin/bookings/page.tsx   (client auto-refresh version)
 
-Purpose:
-- Ensures MerchantReference is always set to the bookingId you pass in.
-- Forwards the request to your existing creator endpoint, preserving your current integration.
-- No changes to downstream code; it returns the same JSON/response your current /api/worldline/create returns.
+Security:
+- Both expect ADMIN_TOKEN; pass as ?token=YOUR_ADMIN_TOKEN or header x-admin-token.
 
-How to use:
-- Frontend: call /api/worldline/create-shim instead of /api/worldline/create (same payload you already send, but include "bookingId").
-- The shim sets MerchantReference = bookingId (and Reference if missing), then forwards to WORLDLINE_CREATE_URL or /api/worldline/create.
-
-Optional env:
-- WORLDLINE_CREATE_URL = full URL to your existing creator (defaults to your app's /api/worldline/create).
-
-Browser test (GET):
-  /api/worldline/create-shim?bookingId=BOOKING_DOC_ID&amount=65.00
-
-Notes:
-- Supports application/json and application/x-www-form-urlencoded bodies.
+How it works:
+- Feed endpoint returns latest N (limit up to 10,000) from /bookings ordered by createdAt desc
+- Admin page uses SWR to refresh every 15s and on window focus
