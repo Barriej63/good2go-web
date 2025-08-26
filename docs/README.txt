@@ -1,14 +1,12 @@
-Good2Go: Worldline Return Route (GET + POST) — Build-safe SendGrid
-Generated: 2025-08-26T00:40:02.342878Z
+Good2Go Admin Auto-Refresh Bookings Page (No SWR)
+Generated: 2025-08-26T00:47:33.845917Z
 
-This overlay provides:
-- app/api/worldline/return/route.ts
-  * Accepts GET and POST (form-urlencoded, multipart/form-data, JSON)
-  * Writes payments/<TransactionId> with raw payload
-  * Updates bookings/<Reference> when your create step sets MerchantReference=bookingId
-  * Sends confirmation email via SendGrid (no bad escapes)
-  * ?debug=1 returns JSON; otherwise 302 to /success?ref=...
+This replaces:
+- app/admin/bookings/page.tsx
 
-Env used (optional):
-- SENDGRID_API_KEY, SENDGRID_FROM
-- SUCCESS_PAGE_PATH (defaults to /success)
+Changes:
+- Removes 'swr' dependency.
+- Uses fetch + setInterval for refresh (every 15s).
+- Keeps limit selector and auto-refresh logic.
+
+Secured by ADMIN_TOKEN via /api/admin/bookings-feed

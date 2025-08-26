@@ -1,37 +1,49 @@
 // app/admin/bookings/page.tsx
 'use client';
-import useSWR from 'swr';
-import { useEffect, useMemo, useState } from 'react';
-
-const fetcher = (url: string) => fetch(url).then(r => r.json());
+import { useEffect, useState } from 'react';
 
 function dollars(cents: number | null) {
   if (cents == null) return '';
   return (cents/100).toFixed(2);
 }
 
-export default function AdminBookingsAuto() {
+export default function AdminBookingsNoSWR() {
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
   const token = params.get('token') || '';
+  const [items, setItems] = useState<any[]>([]);
   const [limit, setLimit] = useState(2000);
-  const url = `/api/admin/bookings-feed?limit=${limit}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const { data, error, isLoading, mutate } = useSWR(url, fetcher, { refreshInterval: 15000 });
+  async function fetchData() {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/bookings-feed?limit=${limit}${token ? `&token=${encodeURIComponent(token)}` : ''}`);
+      const j = await res.json();
+      if (j.ok) {
+        setItems(j.items || []);
+        setError(null);
+      } else {
+        setError(j.error || 'failed');
+      }
+    } catch (e:any) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    const onFocus = () => mutate();
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [mutate]);
-
-  const items = data?.items || [];
-  const total = data?.count || 0;
+    fetchData();
+    const iv = setInterval(fetchData, 15000); // refresh every 15s
+    return () => clearInterval(iv);
+  }, [limit]);
 
   return (
     <main className="p-6 max-w-6xl mx-auto">
-      <h1 className="text-2xl font-bold mb-3">Admin · Bookings (auto-refresh)</h1>
+      <h1 className="text-2xl font-bold mb-3">Admin · Bookings (auto-refresh, no swr)</h1>
       <div className="text-sm text-gray-600 mb-4">
-        Showing latest <b>{total}</b> bookings. Auto-refresh every 15s.
+        Showing latest {items.length} bookings. Auto-refresh every 15s.
         <div className="mt-2">
           Limit:&nbsp;
           <select value={limit} onChange={e => setLimit(parseInt(e.target.value))} className="border p-1 rounded">
@@ -43,8 +55,8 @@ export default function AdminBookingsAuto() {
           </select>
         </div>
       </div>
-      {error && <div className="p-3 mb-4 border rounded bg-red-50 text-red-800">Error loading: {String(error)}</div>}
-      {isLoading && <div className="p-3 mb-4 border rounded bg-blue-50 text-blue-800">Loading…</div>}
+      {error && <div className="p-3 mb-4 border rounded bg-red-50 text-red-800">Error: {error}</div>}
+      {loading && <div className="p-3 mb-4 border rounded bg-blue-50 text-blue-800">Loading…</div>}
 
       <div className="overflow-x-auto border rounded">
         <table className="min-w-full text-sm">
@@ -77,7 +89,7 @@ export default function AdminBookingsAuto() {
                 <td className="p-2">{b.id}</td>
               </tr>
             ))}
-            {items.length === 0 && !isLoading && (
+            {items.length === 0 && !loading && (
               <tr><td colSpan={10} className="p-4">No bookings.</td></tr>
             )}
           </tbody>
