@@ -35,7 +35,7 @@ export default function AdminBookingsNoSWR() {
 
   useEffect(() => {
     fetchData();
-    const iv = setInterval(fetchData, 15000); // refresh every 15s
+    const iv = setInterval(fetchData, 15000);
     return () => clearInterval(iv);
   }, [limit]);
 

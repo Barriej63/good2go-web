@@ -1,9 +1,5 @@
 // app/api/worldline/return/route.ts
 // Return webhook/redirect handler with GET + POST support (form + JSON)
-// - Fixes SendGrid header escaping
-// - Auto-updates bookings when Merchant Reference is the bookingId
-// - Writes top-level payments/<TransactionId>
-// - Debug JSON when ?debug=1, otherwise 302 redirect to /success?ref=<ref>
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirestoreFromAny } from '@/lib/firebaseAdminFallback';
@@ -12,7 +8,6 @@ export const dynamic = 'force-dynamic';
 
 type ReturnMap = Record<string, string | null>;
 
-// helpers ---------------------------
 function toStr(v: any): string | null {
   if (v === undefined || v === null) return null;
   return String(v);
@@ -32,8 +27,7 @@ async function parseBody(req: NextRequest): Promise<ReturnMap> {
       for (const k of Object.keys(j || {})) out[k] = toStr(j[k]);
       return out;
     }
-  } catch { /* fallthrough to query */ }
-  // fallback: treat as empty; caller will merge with query params
+  } catch {}
   return out;
 }
 
@@ -88,7 +82,7 @@ async function persistPayment(db: FirebaseFirestore.Firestore, map: ReturnMap) {
 async function updateBookingIfPossible(db: FirebaseFirestore.Firestore, map: ReturnMap) {
   const refOrId = map['Reference'] || map['ref'] || null;
   if (!refOrId) return { updated:false };
-  const bookingId = refOrId; // we set MerchantReference=bookingId in create shim
+  const bookingId = refOrId;
   const bRef = db.collection('bookings').doc(bookingId);
   const snap = await bRef.get();
   if (!snap.exists) return { updated:false };
@@ -117,18 +111,13 @@ async function updateBookingIfPossible(db: FirebaseFirestore.Firestore, map: Ret
   return { updated:true, bookingPath: bRef.path };
 }
 
-// handler --------------------------
 async function handle(map: ReturnMap, req: NextRequest) {
   const db = getFirestoreFromAny();
   if (!db) return NextResponse.json({ ok:false, error:'no_db' }, { status: 200 });
 
-  // write payment doc
   const paymentPath = await persistPayment(db as any, map).catch(e => null);
-
-  // update booking (when Reference == booking doc id)
   const bookingResult = await updateBookingIfPossible(db as any, map).catch(() => ({ updated:false }));
 
-  // optional email confirmation
   const email = map['Email'] || map['email'] || null;
   if (email) {
     await sendConfirmation(email, 'Booking Confirmation', `Your booking ${map['Reference'] || ''} is confirmed.`);

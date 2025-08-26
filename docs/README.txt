@@ -1,12 +1,13 @@
-Good2Go Admin Auto-Refresh Bookings Page (No SWR)
-Generated: 2025-08-26T00:47:33.845917Z
+Good2Go Bundle Patch — Worldline Return (GET+POST) + Admin Bookings (no SWR)
+Generated: 2025-08-26T00:50:10.044480Z
 
-This replaces:
+Includes:
+- app/api/worldline/return/route.ts
+  * GET + POST support
+  * Firestore writes to payments and bookings
+  * SendGrid email confirmation
+  * ?debug=1 returns JSON; otherwise redirects to /success?ref=...
+
 - app/admin/bookings/page.tsx
-
-Changes:
-- Removes 'swr' dependency.
-- Uses fetch + setInterval for refresh (every 15s).
-- Keeps limit selector and auto-refresh logic.
-
-Secured by ADMIN_TOKEN via /api/admin/bookings-feed
+  * Auto-refresh bookings table every 15s without SWR dependency
+  * Works with ADMIN_TOKEN-protected feed
