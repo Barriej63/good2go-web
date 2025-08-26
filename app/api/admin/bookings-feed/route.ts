@@ -12,32 +12,32 @@ function okToken(req: NextRequest) {
 export async function GET(req: NextRequest) {
   if (!okToken(req)) return NextResponse.json({ ok:false, error:'unauthorized' }, { status: 401 });
   const db = getFirestoreFromAny();
-  if (!db) return NextResponse.json({ ok:false, error:'no_db' }, { status: 200 });
+  if (!db) return NextResponse.json({ ok:false, error:'no_db' });
 
-  const limitParam = parseInt(req.nextUrl.searchParams.get('limit') || '200', 10);
-  const limit = Math.min(Math.max(limitParam, 1), 10000);
-  const since = req.nextUrl.searchParams.get('since'); // ISO string (exclusive)
-  const order = (req.nextUrl.searchParams.get('order') || 'desc').toLowerCase(); // 'asc' or 'desc'
+  const sp = req.nextUrl.searchParams;
+  const limit = Math.min(Math.max(parseInt(sp.get('limit') || '200', 10), 1), 10000);
+  const since = sp.get('since') || '';
+  const order = (sp.get('order') || (since ? 'asc' : 'desc')) as 'asc'|'desc';
 
-  try {
-    let q = db.collection('bookings');
-    if (since) {
-      // createdAt is an ISO string in this project, so lexicographic works for range
-      q = q.where('createdAt', '>', since);
-    }
-    q = q.orderBy('createdAt', order as FirebaseFirestore.OrderByDirection).limit(limit);
-    const snap = await q.get();
-    const items: any[] = [];
-    let latestCreatedAt: string | null = null;
-    for (const doc of snap.docs) {
-      const d = doc.data();
-      items.push({ id: doc.id, ...d });
-      const ca = (d?.createdAt ?? null) as string | null;
-      if (ca && (!latestCreatedAt || ca > latestCreatedAt)) latestCreatedAt = ca;
-    }
-    // If order=desc, items are newest first already; otherwise leave asc
-    return NextResponse.json({ ok:true, count: items.length, latestCreatedAt, items });
-  } catch (e:any) {
-    return NextResponse.json({ ok:false, error:String(e) }, { status: 200 });
+  const col = db.collection('bookings');
+  let q: FirebaseFirestore.Query<FirebaseFirestore.DocumentData> = col as unknown as FirebaseFirestore.Query<FirebaseFirestore.DocumentData>;
+
+  if (since) {
+    // createdAt is an ISO string in this project
+    q = q.where('createdAt', '>', since);
   }
+  q = q.orderBy('createdAt', order).limit(limit);
+
+  const snap = await q.get();
+  const items = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+
+  // Compute latest createdAt we saw (max of list)
+  let latestCreatedAt: string | null = null;
+  for (const it of items) {
+    const c = (it as any).createdAt;
+    if (typeof c === 'string') {
+      if (!latestCreatedAt || c > latestCreatedAt) latestCreatedAt = c;
+    }
+  }
+  return NextResponse.json({ ok:true, items, count: items.length, latestCreatedAt });
 }

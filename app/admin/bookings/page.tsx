@@ -1,133 +1,106 @@
 // app/admin/bookings/page.tsx
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
-function dollars(cents: number | null) {
-  if (cents == null) return '';
+function dollars(cents?: number) {
+  if (typeof cents !== 'number') return '';
   return (cents/100).toFixed(2);
 }
-
-function StatusChip({ status }: { status?: string }) {
-  const s = (status || '').toLowerCase();
-  let cls = 'bg-gray-200 text-gray-800';
-  if (s === 'paid') cls = 'bg-green-100 text-green-800';
-  else if (s === 'pending') cls = 'bg-amber-100 text-amber-800';
-  else if (s === 'failed' || s === 'cancelled' || s === 'canceled') cls = 'bg-red-100 text-red-800';
-  return <span className={`px-2 py-0.5 rounded text-xs ${cls}`}>{status || '—'}</span>;
+function clsStatus(s?: string) {
+  const v = (s||'').toLowerCase();
+  if (v==='paid') return 'bg-green-100 text-green-800';
+  if (v==='pending') return 'bg-amber-100 text-amber-800';
+  if (v==='failed' || v==='canceled' || v==='cancelled') return 'bg-red-100 text-red-800';
+  return 'bg-gray-100 text-gray-800';
 }
 
-type Booking = {
-  id: string;
-  createdAt?: string;
-  date?: string;
-  start?: string;
-  end?: string;
-  name?: string;
-  email?: string;
-  region?: string;
-  status?: string;
-  amountCents?: number | null;
-  ref?: string;
-};
-
-export default function AdminBookingsManual() {
+export default function AdminBookings() {
   const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
   const token = params.get('token') || '';
-  const [items, setItems] = useState<Booking[]>([]);
-  const [limit, setLimit] = useState(200);
+  const [items, setItems] = useState<any[]>([]);
+  const [limit, setLimit] = useState<number>(200);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string>('');
+  const [error, setError] = useState<string|undefined>();
   const [search, setSearch] = useState('');
-  const [since, setSince] = useState<string | null>(null); // latest createdAt we have
+  const [latest, setLatest] = useState<string>(''); // newest createdAt in list
 
-  // Initial fetch (newest first)
-  async function initialLoad() {
+  async function fetchLatest() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/bookings-feed?limit=${limit}&order=desc${token ? `&token=${encodeURIComponent(token)}` : ''}`);
+      const res = await fetch(`/api/admin/bookings-feed?limit=${limit}&order=desc${token?`&token=${encodeURIComponent(token)}`:''}`);
       const j = await res.json();
-      if (!j.ok) throw new Error(j.error || 'failed');
-      const arr: Booking[] = (j.items || []);
-      setItems(arr);
-      setSince(j.latestCreatedAt || (arr[0]?.createdAt ?? null));
-      setError(null);
+      if (j.ok) {
+        setItems(j.items || []);
+        setError(undefined);
+        setLatest(j.latestCreatedAt || '');
+      } else setError(j.error || 'failed');
     } catch (e:any) {
       setError(String(e));
     } finally {
       setLoading(false);
-      setLastUpdated(new Date().toLocaleString());
     }
   }
 
-  // Manual delta fetch (only newer than 'since')
-  async function fetchNew() {
+  async function fetchNewOnly() {
+    if (!latest) { await fetchLatest(); return; }
     setLoading(true);
     try {
-      const url = `/api/admin/bookings-feed?limit=${limit}&order=asc${since ? `&since=${encodeURIComponent(since)}` : ''}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
-      const res = await fetch(url);
+      const res = await fetch(`/api/admin/bookings-feed?since=${encodeURIComponent(latest)}&order=asc${token?`&token=${encodeURIComponent(token)}`:''}`);
       const j = await res.json();
-      if (!j.ok) throw new Error(j.error || 'failed');
-      const newOnes: Booking[] = (j.items || []);
-      if (newOnes.length > 0) {
-        // append to front (since result is oldest->newest asc)
-        const latest = newOnes[newOnes.length - 1].createdAt || since;
-        setItems(prev => [...newOnes.reverse(), ...prev]);
-        setSince(latest || since);
-      }
-      setError(null);
+      if (j.ok) {
+        const newItems = j.items || [];
+        if (newItems.length) {
+          const newest = newItems[newItems.length-1]?.createdAt || latest;
+          setLatest(newest);
+          setItems(prev => [...newItems.reverse(), ...prev].slice(0, limit));
+        }
+        setError(undefined);
+      } else setError(j.error || 'failed');
     } catch (e:any) {
       setError(String(e));
     } finally {
       setLoading(false);
-      setLastUpdated(new Date().toLocaleString());
     }
   }
-
-  useEffect(() => {
-    initialLoad();
-    // No auto interval: manual-only
-  }, [limit]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
     return items.filter((b:any) => {
-      const hay = [
-        b.id, b.ref, b.name, b.email, b.region, b.status, b.date, b.start, b.end
-      ].filter(Boolean).join(' ').toLowerCase();
+      const hay = [b.id,b.ref,b.name,b.email,b.region,b.status,b.date,b.start,b.end].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(q);
     });
   }, [items, search]);
+
+  const exportHref = `/api/admin/bookings-export?limit=${limit}${token?`&token=${encodeURIComponent(token)}`:''}`;
 
   return (
     <main className="p-6 max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold mb-2">Admin · Bookings</h1>
       <p className="text-amber-700 bg-amber-50 border border-amber-200 p-2 rounded mb-4">
-        ⚠️ Token-only access (<code>ADMIN_TOKEN</code>). Manual refresh only to minimize Firestore reads.
+        ⚠️ Token-only access (<code>ADMIN_TOKEN</code>).
       </p>
 
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <label className="text-sm">Limit per fetch:</label>
-          <select value={limit} onChange={e => setLimit(parseInt(e.target.value))} className="border p-1 rounded">
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <button onClick={fetchLatest} className="bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1">Refresh (full latest)</button>
+        <button onClick={fetchNewOnly} className="bg-green-600 hover:bg-green-700 text-white rounded px-3 py-1">Fetch new only</button>
+        <a href={exportHref} className="bg-gray-700 hover:bg-gray-800 text-white rounded px-3 py-1">Export CSV</a>
+
+        <div className="ml-4">
+          <label className="mr-2 text-sm">Limit:</label>
+          <select value={limit} onChange={e=>setLimit(parseInt(e.target.value))} className="border rounded p-1">
             <option value={200}>200</option>
             <option value={500}>500</option>
             <option value={1000}>1,000</option>
+            <option value={2000}>2,000</option>
           </select>
         </div>
-        <button onClick={initialLoad} className="rounded px-3 py-1 bg-gray-700 text-white hover:bg-gray-800">
-          Refresh (full latest)
-        </button>
-        <button onClick={fetchNew} className="rounded px-3 py-1 bg-blue-600 text-white hover:bg-blue-700" title="Fetch only new bookings since your last load">
-          Fetch new only
-        </button>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" className="border rounded px-2 py-1 w-64"/>
-        <div className="text-sm text-gray-700 ml-auto">Last updated: <span className="font-medium">{lastUpdated || '—'}</span></div>
+
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search…" className="border rounded px-2 py-1 w-64 ml-2" />
       </div>
 
-      {error && <div className="p-3 mb-4 border rounded bg-red-50 text-red-800">Error: {error}</div>}
-      {loading && <div className="p-3 mb-4 border rounded bg-blue-50 text-blue-800">Loading…</div>}
+      {loading && <div className="p-2 bg-blue-50 border border-blue-200 rounded mb-3">Loading…</div>}
+      {error && <div className="p-2 bg-red-50 border border-red-200 rounded mb-3">Error: {error}</div>}
 
       <div className="overflow-x-auto border rounded">
         <table className="min-w-full text-sm">
@@ -146,7 +119,7 @@ export default function AdminBookingsManual() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((b:any) => (
+            {filtered.map((b:any)=> (
               <tr key={b.id} className="border-t">
                 <td className="p-2">{b.createdAt}</td>
                 <td className="p-2">{b.date}</td>
@@ -154,22 +127,20 @@ export default function AdminBookingsManual() {
                 <td className="p-2">{b.name}</td>
                 <td className="p-2">{b.email}</td>
                 <td className="p-2">{b.region}</td>
-                <td className="p-2"><StatusChip status={b.status} /></td>
-                <td className="p-2 text-right">${dollars(b.amountCents ?? null)}</td>
+                <td className="p-2"><span className={`px-2 py-0.5 rounded text-xs ${clsStatus(b.status)}`}>{b.status||'—'}</span></td>
+                <td className="p-2 text-right">${dollars(b.amountCents)}</td>
                 <td className="p-2">{b.ref}</td>
                 <td className="p-2">{b.id}</td>
               </tr>
             ))}
-            {filtered.length === 0 && !loading && (
-              <tr><td colSpan={10} className="p-4">No bookings.</td></tr>
+            {filtered.length===0 && !loading && (
+              <tr><td colSpan={10} className="p-3">No bookings.</td></tr>
             )}
           </tbody>
         </table>
       </div>
 
-      <footer className="mt-6 text-xs text-gray-500">
-        Build timestamp: {new Date().toISOString()}
-      </footer>
+      <footer className="mt-6 text-xs text-gray-500">Build: 2025-08-26T02:51:38.589657Z</footer>
     </main>
   );
 }
