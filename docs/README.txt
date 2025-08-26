@@ -1,11 +1,13 @@
-Enhanced booking resolver + orphan logging
-Generated: 2025-08-25T21:05:49.837632Z
+Good2Go Admin Dashboard + Reconcile (ADMIN_TOKEN)
+Generated: 2025-08-26T00:22:51.325189Z
 
-- Tries bookings/<Reference> (doc id), then queries by 'ref', then 'reference'
-- Writes payments/<tx> always
-- If no booking found, logs to returns_orphans/* (no booking created)
-- Safe email send only when a booking is found
-- '&debug=1' returns detailed JSON
+Files:
+- app/api/admin/reconcile/route.ts   (reconcile bookings by doc ID + ref, secured with ADMIN_TOKEN)
+- app/admin/bookings/page.tsx        (simple admin page listing bookings + reconcile form)
 
-Env (optional):
-- RETURN_NO_EMAIL=1 to disable emails during testing
+Security:
+- Set ADMIN_TOKEN in Vercel env vars
+- Access /api/admin/reconcile?booking=<id>&ref=<ref>&token=ADMIN_TOKEN
+- Access /admin/bookings?token=ADMIN_TOKEN
+
+Note: This variant uses ADMIN_TOKEN (not Basic Auth).
