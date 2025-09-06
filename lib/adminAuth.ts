@@ -1,12 +1,11 @@
-import { cookies, headers } from 'next/headers';
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 const COOKIE_NAME = 'g2g_admin';
-const COOKIE_MAX_AGE = 60 * 60 * 8; // 8h
+const COOKIE_MAX_AGE = 60 * 60 * 8;
 
 export async function isAdminCookie() {
-  const jar = cookies();
-  return jar.get(COOKIE_NAME)?.value === process.env.ADMIN_TOKEN;
+  return cookies().get(COOKIE_NAME)?.value === process.env.ADMIN_TOKEN;
 }
 
 export function setAdminCookie(res: NextResponse, token: string) {
@@ -16,17 +15,13 @@ export function setAdminCookie(res: NextResponse, token: string) {
     httpOnly: true,
     secure: true,
     sameSite: 'lax',
-    path: '/',         // IMPORTANT: visible to /admin
+    path: '/',
     maxAge: COOKIE_MAX_AGE,
   });
 }
 
 export function clearAdminCookie(res: NextResponse) {
-  res.cookies.set({
-    name: COOKIE_NAME,
-    value: '',
-    path: '/',
-    maxAge: 0,
-  });
+  res.cookies.set({ name: COOKIE_NAME, value: '', path: '/', maxAge: 0 });
 }
+
 
