@@ -24,4 +24,3 @@ export async function isAdminCookie(): Promise<boolean> {
   const adminToken = process.env.ADMIN_TOKEN ?? '';
   return Boolean(token && adminToken && token === adminToken);
 }
-
