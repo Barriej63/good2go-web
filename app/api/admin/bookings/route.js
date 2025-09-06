@@ -1,60 +1,41 @@
 // app/api/admin/bookings/route.js
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { getApps, initializeApp, cert, applicationDefault } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 
-// --- Admin cookie check (no external helpers)
-function isAdmin() {
-  const token = cookies().get('g2g_admin')?.value ?? '';
-  const adminToken = process.env.ADMIN_TOKEN ?? '';
-  return Boolean(token && adminToken && token === adminToken);
-}
-
-// --- Firebase Admin init (safe with either ADC or service-account envs)
-function db() {
-  if (!getApps().length) {
-    const hasSA =
-      process.env.FIREBASE_PROJECT_ID &&
-      process.env.FIREBASE_CLIENT_EMAIL &&
-      process.env.FIREBASE_PRIVATE_KEY;
-
-    initializeApp(
-      hasSA
-        ? {
-            credential: cert({
-              projectId: process.env.FIREBASE_PROJECT_ID,
-              clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-              privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-            }),
-          }
-        : { credential: applicationDefault() }
-    );
-  }
-  return getFirestore();
+async function getDb() {
+  try {
+    // Works with your existing helper if present (no build-time coupling)
+    const mod = await import('@/lib/firebaseAdminFallback');
+    if (mod.getFirestoreSafe) return await mod.getFirestoreSafe();
+  } catch {}
+  try {
+    // Fallback: try firebase-admin if you already init elsewhere
+    const admin = (await import('firebase-admin')).default;
+    const { getFirestore } = await import('firebase-admin/firestore');
+    if (!admin.apps?.length) throw new Error('admin_not_initialized');
+    return getFirestore();
+  } catch {}
+  return null;
 }
 
 export async function GET(req) {
-  if (!isAdmin()) {
-    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-  }
+  const { isAdminCookie } = await import('@/lib/adminAuth');
+  const ok = await isAdminCookie();
+  if (!ok) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+
+  const db = await getDb();
+  if (!db) return NextResponse.json({ ok: false, error: 'firestore_unavailable' }, { status: 500 });
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get('limit') ?? 100), 1000);
-  const since = searchParams.get('since'); // ISO string from our data model
+  const since = searchParams.get('since'); // ISO string of createdAt
+  const limit = Math.min(1000, parseInt(searchParams.get('limit') || '100', 10));
 
-  const col = db().collection('bookings');
-  // createdAt is stored as ISO string in your dataset, so lexicographic works
-  let q = col.orderBy('createdAt').limit(limit);
+  let q = db.collection('bookings').orderBy('createdAt', 'asc');
   if (since) q = q.where('createdAt', '>', since);
+  q = q.limit(limit);
 
   const snap = await q.get();
-  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const nextSince = items.length ? items[items.length - 1].createdAt : null;
 
-  return NextResponse.json({
-    ok: true,
-    count: items.length,
-    items,
-    nextSince: items.length ? items[items.length - 1].createdAt : since ?? null,
-  });
+  return NextResponse.json({ ok: true, items, nextSince });
 }
