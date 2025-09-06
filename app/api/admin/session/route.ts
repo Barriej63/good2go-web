@@ -1,22 +1,28 @@
-// app/api/admin/session/route.ts
 import { NextResponse } from 'next/server';
-import { cookieHeadersFor, clearCookieHeaders } from '@/lib/adminAuth';
+import { setAdminCookie, clearAdminCookie, isAdminCookie } from '@/lib/adminAuth';
+
+export async function GET() {
+  // status
+  return NextResponse.json({ ok: true, admin: await isAdminCookie() });
+}
 
 export async function POST(req: Request) {
-  const { token } = await req.json().catch(() => ({}));
-  if (!token) {
-    return NextResponse.json({ ok: false, error: 'missing_token' }, { status: 400 });
-  }
-  if (token !== process.env.ADMIN_TOKEN) {
+  // login
+  const body = await req.json().catch(() => ({}));
+  const token = body?.token ?? new URL(req.url).searchParams.get('token');
+  const adminToken = process.env.ADMIN_TOKEN ?? '';
+
+  if (!token || !adminToken || token !== adminToken) {
     return NextResponse.json({ ok: false, error: 'invalid_token' }, { status: 401 });
   }
-  const res = NextResponse.json({ ok: true });
-  cookieHeadersFor(token).forEach(([k, v]) => res.headers.append(k, v));
-  return res;
+
+  await setAdminCookie(token);
+  return NextResponse.json({ ok: true, admin: true });
 }
 
 export async function DELETE() {
-  const res = NextResponse.json({ ok: true });
-  clearCookieHeaders().forEach(([k, v]) => res.headers.append(k, v));
-  return res;
+  // logout
+  await clearAdminCookie();
+  return NextResponse.json({ ok: true, admin: false });
 }
+
