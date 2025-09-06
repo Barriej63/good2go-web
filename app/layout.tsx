@@ -1,13 +1,38 @@
-export const metadata = { title: 'Good2Go — Concussion Testing', description: 'Bookings and info' };
+import './globals.css';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+
+export const metadata: Metadata = {
+  title: 'Good2Go — Concussion Monitoring',
+  description: 'Bookings and info',
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body style={{ fontFamily:'system-ui', margin:0 }}>
-        <header style={{ padding:'16px', borderBottom:'1px solid #eee' }}>
-          <h1 style={{ margin:0 }}>Good2Go — Concussion Monitoring</h1>
+      <body>
+        <header className="site-header">
+          <div className="container site-header-inner">
+            <Link href="/" className="brand" aria-label="Good2Go Home">
+              <img src="/good2go-logo.svg" alt="Good2Go" />
+              <span className="title">Good2Go</span>
+            </Link>
+            <div className="slogan">Recover Smart. Return Strong.</div>
+            <div style={{ marginLeft: 'auto' }} className="btn-row">
+              <Link className="btn btn-ghost" href="/book">Book</Link>
+              <Link className="btn btn-ghost" href="/admin/login">Admin</Link>
+            </div>
+          </div>
         </header>
-        <main style={{ maxWidth:960, margin:'0 auto', padding:16 }}>{children}</main>
+
+        {children}
+
+        <footer className="site-footer">
+          <div className="container site-footer-inner">
+            © {new Date().getFullYear()} Good2Go
+          </div>
+        </footer>
       </body>
     </html>
-  )
+  );
 }
