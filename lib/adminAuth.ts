@@ -1,30 +1,32 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
+import { NextResponse } from 'next/server';
 
-const COOKIE = 'g2g_admin';
-const ONE_DAY = 60 * 60 * 24;
+const COOKIE_NAME = 'g2g_admin';
+const COOKIE_MAX_AGE = 60 * 60 * 8; // 8h
 
-/** Set the admin cookie after a successful login. */
-export async function setAdminCookie(token: string) {
-  'use server';
-  cookies().set(COOKIE, token, {
+export async function isAdminCookie() {
+  const jar = cookies();
+  return jar.get(COOKIE_NAME)?.value === process.env.ADMIN_TOKEN;
+}
+
+export function setAdminCookie(res: NextResponse, token: string) {
+  res.cookies.set({
+    name: COOKIE_NAME,
+    value: token,
     httpOnly: true,
-    sameSite: 'strict',
-    path: '/',
-    maxAge: ONE_DAY,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',         // IMPORTANT: visible to /admin
+    maxAge: COOKIE_MAX_AGE,
   });
 }
 
-/** Clear the admin cookie (logout). */
-export async function clearAdminCookie() {
-  'use server';
-  cookies().set(COOKIE, '', { path: '/', maxAge: 0 });
-}
-
-/** Check if current request carries a valid admin cookie. */
-export async function isAdminCookie(): Promise<boolean> {
-  'use server';
-  const token = cookies().get(COOKIE)?.value ?? '';
-  const adminToken = process.env.ADMIN_TOKEN ?? '';
-  return Boolean(token && adminToken && token === adminToken);
+export function clearAdminCookie(res: NextResponse) {
+  res.cookies.set({
+    name: COOKIE_NAME,
+    value: '',
+    path: '/',
+    maxAge: 0,
+  });
 }
 
