@@ -1,22 +1,31 @@
 // app/admin/page.tsx
-import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+import Link from 'next/link';
+import { isAdminCookie } from '@/lib/adminAuth';
 
-export const dynamic = 'force-dynamic'; // ensure no stale cache
+export default function AdminHome() {
+  const authed = isAdminCookie();
 
-export default async function AdminHome() {
-  const isAuthed = cookies().get('admin')?.value === '1';
-  if (!isAuthed) redirect('/admin/login');
+  if (!authed) {
+    // Do NOT redirect — show a link. This avoids any loop.
+    return (
+      <main style={{ maxWidth: 680, margin: '64px auto', fontFamily: 'system-ui' }}>
+        <h1>Admin</h1>
+        <p>You’re not signed in.</p>
+        <p><Link href="/admin/login">Go to Admin Login →</Link></p>
+      </main>
+    );
+  }
 
   return (
-    <main style={{ padding: 24 }}>
+    <main style={{ maxWidth: 960, margin: '48px auto', fontFamily: 'system-ui' }}>
       <h1>Admin</h1>
-      <p>Welcome. You are authenticated.</p>
-
-      <ul>
-        <li><a href="/admin/bookings">Bookings</a></li>
-        <li><a href="/api/admin/logout">Log out</a></li>
-      </ul>
+      <p>Signed in. (Content goes here.)</p>
+      <form action="/api/admin/session" method="POST" onSubmit={(e) => {
+        e.preventDefault();
+        fetch('/api/admin/session', { method: 'DELETE' }).then(() => location.reload());
+      }}>
+        <button type="submit" style={{ marginTop: 16 }}>Sign out</button>
+      </form>
     </main>
   );
 }
