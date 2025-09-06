@@ -9,8 +9,12 @@ export default function Page() {
         <li>Standard 1-minute dual-task gait test</li>
         <li>Multiple regional clinics</li>
       </ul>
+
       <p><Link href="/book">Go to Booking →</Link></p>
-      <p><Link href="/admin">Admin →</Link></p>
+
+      {/* Admin entry (login page) */}
+      <p><Link href="/admin/login">Admin →</Link></p>
     </section>
   );
 }
+
