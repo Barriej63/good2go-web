@@ -1,17 +1,21 @@
-// app/api/admin/login/route.ts
 import { NextResponse } from 'next/server';
-import { setAdminCookie } from '@/lib/adminAuth';
+import { setAdminCookie, clearAdminCookie } from '@/lib/adminAuth';
 
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const token = url.searchParams.get('token') ?? '';
-  const adminToken = process.env.ADMIN_TOKEN ?? '';
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const token = String(body?.token || '');
 
-  if (!token || token !== adminToken) {
+  if (!token || token !== process.env.ADMIN_TOKEN) {
     return NextResponse.json({ ok: false, error: 'invalid_token' }, { status: 401 });
   }
 
-  await setAdminCookie(token);
-  return NextResponse.json({ ok: true });
+  const res = NextResponse.json({ ok: true });
+  setAdminCookie(res, token);           // ✅ pass (res, token)
+  return res;
 }
 
+export async function DELETE() {
+  const res = NextResponse.json({ ok: true });
+  clearAdminCookie(res);
+  return res;
+}
