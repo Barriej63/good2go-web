@@ -1,10 +1,9 @@
-// lib/adminAuth.ts
 import { cookies } from 'next/headers';
 
 const COOKIE = 'g2g_admin';
 const ONE_DAY = 60 * 60 * 24;
 
-/** Server Action: set the admin cookie */
+/** Set the admin cookie after a successful login. */
 export async function setAdminCookie(token: string) {
   'use server';
   cookies().set(COOKIE, token, {
@@ -15,13 +14,13 @@ export async function setAdminCookie(token: string) {
   });
 }
 
-/** Server Action: clear the admin cookie */
+/** Clear the admin cookie (logout). */
 export async function clearAdminCookie() {
   'use server';
   cookies().set(COOKIE, '', { path: '/', maxAge: 0 });
 }
 
-/** Server helper: check cookie vs env ADMIN_TOKEN */
+/** Check if current request carries a valid admin cookie. */
 export async function isAdminCookie(): Promise<boolean> {
   'use server';
   const token = cookies().get(COOKIE)?.value ?? '';
