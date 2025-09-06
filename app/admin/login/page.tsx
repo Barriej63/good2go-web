@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 
-export default function AdminLogin() {
+export default function AdminLoginPage() {
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -12,63 +12,42 @@ export default function AdminLogin() {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
-    const res = await fetch('/api/admin/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
-    setBusy(false);
-    if (res.ok) {
-      location.href = '/admin';
-    } else {
+    try {
+      const res = await fetch('/api/admin/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
       const j = await res.json().catch(() => ({}));
-      setMsg(j?.error ?? 'Login failed');
+      if (res.ok && j?.ok) {
+        location.href = '/admin';
+      } else {
+        setMsg(j?.error ?? 'Login failed');
+      }
+    } catch (err) {
+      setMsg('Network error');
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <main style={{ maxWidth: 420, margin: '64px auto', fontFamily: 'system-ui' }}>
-      <h1 style={{ marginBottom: 8 }}>Admin Login</h1>
-      <p style={{ color: '#555', marginBottom: 24 }}>Enter your admin token to continue.</p>
-
+    <main style={{ maxWidth: 420, margin: '64px auto', padding: 16 }}>
+      <h1>Admin Login</h1>
+      <p style={{ color: '#555' }}>Enter your admin token to continue.</p>
       <form onSubmit={onSubmit}>
         <input
           type="password"
           value={token}
-          onChange={(e) => setToken(e.target.value)}
+          onChange={e => setToken(e.target.value)}
           placeholder="ADMIN_TOKEN"
-          style={{
-            width: '100%',
-            padding: '12px 14px',
-            fontSize: 16,
-            border: '1px solid #ddd',
-            borderRadius: 8,
-            marginBottom: 12,
-          }}
+          style={{ display: 'block', width: '100%', padding: 10, margin: '12px 0' }}
         />
-        <button
-          type="submit"
-          disabled={busy || !token}
-          style={{
-            width: '100%',
-            padding: '12px 14px',
-            fontSize: 16,
-            borderRadius: 8,
-            background: busy ? '#9ca3af' : '#16a34a',
-            color: '#fff',
-            border: 0,
-            cursor: busy ? 'not-allowed' : 'pointer',
-          }}
-        >
+        <button disabled={busy} type="submit">
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
-
-      {msg && (
-        <p style={{ color: '#b91c1c', marginTop: 12 }}>
-          {String(msg)}
-        </p>
-      )}
+      {msg && <p style={{ color: 'crimson', marginTop: 12 }}>{String(msg)}</p>}
     </main>
   );
 }
