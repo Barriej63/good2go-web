@@ -41,3 +41,6 @@ export function getFirestoreFromAny(): FirebaseFirestore.Firestore | null {
     return null;
   }
 }
+// Alias so older imports still work
+export { getFirestoreFromAny as getFirestoreSafe };
+
