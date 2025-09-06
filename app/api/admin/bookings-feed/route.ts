@@ -1,32 +1,30 @@
-import { NextResponse } from 'next/server';
+// /app/api/admin/bookings-feed/route.ts
+import { NextResponse, NextRequest } from 'next/server';
 import { isAdminCookie } from '@/lib/adminAuth';
 import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
-import { getAdminDb } from '@/lib/firebaseAdmin';
 
-export const dynamic = 'force-dynamic'; // avoid caching on Vercel
-
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const ok = await isAdminCookie();
-  if (!ok) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-
-  const url = new URL(req.url);
-  const since = url.searchParams.get('since') || '';
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10), 1000);
-
-  const db = getFirestore();
-  const col = db.collection('bookings');
-
-  // In your project "createdAt" is an ISO string, so lexicographic range works.
-  let q:
-    FirebaseFirestore.Query<FirebaseFirestore.DocumentData> =
-    col.orderBy('createdAt').limit(limit);
-
-  if (since) {
-    q = col.where('createdAt', '>', since).orderBy('createdAt').limit(limit);
+  if (!ok) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }
 
-  const snap = await q.get();
-  const items = snap.docs.map(d => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
+  const db = getFirestoreSafe();
+  if (!db) {
+    return NextResponse.json({ ok: false, error: 'firestore_unavailable' }, { status: 500 });
+  }
 
+  const { searchParams } = new URL(req.url);
+  const since = searchParams.get('since'); // ISO string
+
+  let q = db.collection('bookings');
+  if (since) {
+    // createdAt is stored as an ISO string in your project, so a string range works
+    q = q.where('createdAt', '>', since);
+  }
+  q = q.orderBy('createdAt', 'asc').limit(200);
+
+  const snap = await q.get();
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   return NextResponse.json({ ok: true, items });
 }
