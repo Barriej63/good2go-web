@@ -2,21 +2,18 @@ import { NextResponse } from 'next/server';
 import { setAdminCookie, clearAdminCookie } from '@/lib/adminAuth';
 
 export async function POST(req: Request) {
-  const { token } = await req.json().catch(() => ({} as { token?: string }));
-  const adminToken = process.env.ADMIN_TOKEN || '';
-
-  if (!token) {
-    return NextResponse.json({ ok: false, error: 'missing_token' }, { status: 400 });
+  const body = await req.json().catch(() => ({}));
+  const token = String(body?.token || '');
+  if (!token || token !== process.env.ADMIN_TOKEN) {
+    return NextResponse.json({ ok: false, error: 'invalid_token' }, { status: 401 });
   }
-  if (!adminToken || token !== adminToken) {
-    return NextResponse.json({ ok: false, error: 'bad_token' }, { status: 401 });
-  }
-
-  await setAdminCookie(token);
-  return NextResponse.json({ ok: true });
+  const res = NextResponse.json({ ok: true });
+  setAdminCookie(res, token);
+  return res;
 }
 
 export async function DELETE() {
-  await clearAdminCookie();
-  return NextResponse.json({ ok: true });
+  const res = NextResponse.json({ ok: true });
+  clearAdminCookie(res);
+  return res;
 }
