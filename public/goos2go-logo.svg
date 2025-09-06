@@ -1,0 +1,6 @@
+<svg width="160" height="36" viewBox="0 0 160 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Simple, clean placeholder wordmark; replace with your real artwork any time -->
+  <rect rx="6" width="36" height="36" fill="#16A34A"/>
+  <path d="M11 18a7 7 0 1 0 14 0 7 7 0 0 0-14 0zm4.5 0a2.5 2.5 0 1 1 5 0 2.5 2.5 0 0 1-5 0Z" fill="white"/>
+  <text x="46" y="24" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-size="18" font-weight="700" fill="#111827">Good2Go</text>
+</svg>
