@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isAdminCookie } from '@/lib/adminAuth';
-import { getFirestore } from '@/lib/firebaseServer';
+import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
 
 export const dynamic = 'force-dynamic'; // avoid caching on Vercel
 
