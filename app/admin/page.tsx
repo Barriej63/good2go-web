@@ -1,31 +1,23 @@
-'use client';
-import { useEffect, useState } from 'react';
-import { db } from '@/src/firebase';
-import { collection, getDocs, query } from 'firebase/firestore';
+// app/admin/page.tsx
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 
-export default function AdminPage() {
-  const [bookings, setBookings] = useState<any[]>([]);
+export const dynamic = 'force-dynamic'; // ensure no stale cache
 
-  useEffect(() => {
-    async function load() {
-      const q = query(collection(db, 'bookings'));
-      const snap = await getDocs(q);
-      setBookings(snap.docs.map(d => ({ id:d.id, ...d.data() })));
-    }
-    load();
-  }, []);
+export default async function AdminHome() {
+  const isAuthed = cookies().get('admin')?.value === '1';
+  if (!isAuthed) redirect('/admin/login');
 
   return (
-    <section>
-      <h2>Admin Bookings</h2>
-      <p style={{color:'#a00'}}>⚠️ Add real auth & role checks before production.</p>
+    <main style={{ padding: 24 }}>
+      <h1>Admin</h1>
+      <p>Welcome. You are authenticated.</p>
+
       <ul>
-        {bookings.map((b:any) => (
-          <li key={b.id}>
-            <b>{b.name}</b> — {b.email} — {b.region} — {b.slot?.weekday} {b.slot?.start}-{b.slot?.end} @ {b.slot?.venueAddress} — <i>{b.status}</i> — {b.product?.name} ${(b.amount/100).toFixed(2)}
-          </li>
-        ))}
+        <li><a href="/admin/bookings">Bookings</a></li>
+        <li><a href="/api/admin/logout">Log out</a></li>
       </ul>
-    </section>
+    </main>
   );
 }
+
