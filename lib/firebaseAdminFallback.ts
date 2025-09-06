@@ -1,25 +1,31 @@
-// lib/firebaseAdminFallback.ts
-let cached: any = null;
+// /lib/firebaseAdminFallback.ts
+/* Server-safe Firestore init for Vercel lambdas.
+   Works whether you store FIREBASE_PRIVATE_KEY as a multi-line PEM
+   or as a one-liner with \n escapes. */
 
-function getPrivateKey() {
-  const raw = process.env.FIREBASE_PRIVATE_KEY || '';
-  // If the key already looks like a PEM block, return as-is (supports true multi-line)
+let cached: FirebaseFirestore.Firestore | null = null;
+
+function normalizePrivateKey(raw: string): string {
+  if (!raw) return '';
   if (raw.includes('-----BEGIN') && raw.includes('PRIVATE KEY-----')) return raw;
-  // Otherwise, treat it as escaped newlines and normalize
   return raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
 }
 
 export function getFirestoreFromAny(): FirebaseFirestore.Firestore | null {
   if (cached) return cached;
-  // Try using project helper if present in the repo
+
+  // 1) If your repo already has a firebaseAdmin helper, try to use it.
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const adminAny = require('@/lib/firebaseAdmin') || require('../lib/firebaseAdmin');
     const admin = adminAny.default || adminAny;
     cached = admin.firestore();
     return cached;
-  } catch {}
-  // Fallback: initialize directly from env
+  } catch {
+    /* ignore and fall through */
+  }
+
+  // 2) Fallback: init firebase-admin directly from env
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const admin = require('firebase-admin');
@@ -29,18 +35,17 @@ export function getFirestoreFromAny(): FirebaseFirestore.Firestore | null {
         credential: admin.credential.cert({
           projectId: process.env.FIREBASE_PROJECT_ID,
           clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey: getPrivateKey(),
+          privateKey: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY || ''),
         } as any),
       });
     }
     cached = admin.firestore();
     return cached;
-  } catch (e) {
-    const msg = (e && (e as any).message) ? (e as any).message : String(e);
-    console.warn('⚠️ firebase-admin init failed:', msg);
+  } catch (e: any) {
+    console.warn('⚠️ firebase-admin init failed:', e?.message || String(e));
     return null;
   }
 }
-// Alias so older imports still work
-export { getFirestoreFromAny as getFirestoreSafe };
 
+/** Convenience alias name some files prefer. */
+export const getFirestoreSafe = getFirestoreFromAny;
