@@ -1,3 +1,4 @@
+// app/admin/bookings/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -46,7 +47,7 @@ export default function BookingsPage() {
                   <td className="px-3 py-2">{b.name || ''}</td>
                   <td className="px-3 py-2">{b.email || ''}</td>
                   <td className="px-3 py-2">
-                    <span className="inline-flex items-center rounded-full bg-sky-50 text-sky-700 px-2 py-0.5 text-xs">
+                    <span className="inline-flex items-center rounded-full bg-emerald-50 text-emerald-700 px-2 py-0.5 text-xs">
                       {b.region || ''}
                     </span>
                   </td>
