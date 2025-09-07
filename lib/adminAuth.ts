@@ -62,3 +62,17 @@ export function clearAdminCookie(res: NextResponse) {
   res.cookies.set({ name: ROLE_COOKIE, value: '', path: '/', maxAge: 0 });
 }
 
+// Keep everything you already have above… then add:
+
+export function hasRole(
+  role: AdminRole | null | undefined,
+  allowed: AdminRole | AdminRole[]
+): boolean {
+  if (!role) return false;
+  const list = Array.isArray(allowed) ? allowed : [allowed];
+  return list.includes(role);
+}
+
+export function requireSuperadmin(role: AdminRole | null | undefined): boolean {
+  return role === 'superadmin';
+}
