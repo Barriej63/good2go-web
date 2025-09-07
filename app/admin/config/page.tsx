@@ -1,3 +1,4 @@
+// app/admin/config/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -36,7 +37,7 @@ export default function ConfigPage() {
       <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
         <h2 className="font-medium mb-2">Regions</h2>
         <textarea
-          className="w-full border rounded-lg p-2 leading-6 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          className="w-full border rounded-lg p-2 leading-6 focus:outline-none focus:ring-2 focus:ring-emerald-300"
           rows={4}
           value={(cfg.regions || []).join('\n')}
           onChange={e => setCfg(s => ({ ...s, regions: e.target.value.split('\n').map(v => v.trim()).filter(Boolean) }))}
@@ -47,7 +48,7 @@ export default function ConfigPage() {
       <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
         <h2 className="font-medium mb-2">Timeslots</h2>
         <textarea
-          className="w-full border rounded-lg p-2 leading-6 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          className="w-full border rounded-lg p-2 leading-6 focus:outline-none focus:ring-2 focus:ring-emerald-300"
           rows={6}
           value={(cfg.timeslots || []).join('\n')}
           onChange={e => setCfg(s => ({ ...s, timeslots: e.target.value.split('\n').map(v => v.trim()).filter(Boolean) }))}
@@ -59,7 +60,7 @@ export default function ConfigPage() {
         <button
           onClick={save}
           disabled={saving}
-          className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 shadow-sm disabled:opacity-50"
+          className="btn btn-primary disabled:opacity-50"
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
