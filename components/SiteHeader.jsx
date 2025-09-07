@@ -5,29 +5,25 @@ import { usePathname } from 'next/navigation';
 
 export default function SiteHeader() {
   const pathname = usePathname() || '/';
-
-  // Hide header on admin routes (admin has its own header/sidebar)
-  if (pathname.startsWith('/admin')) return null;
+  if (pathname.startsWith('/admin')) return null; // don’t show on admin
 
   return (
     <header className="border-b bg-gradient-to-r from-sky-600 to-sky-500 text-white">
       <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {/* <img src="/logo.svg" alt="Good2Go" className="h-6 w-6" /> */}
           <span className="text-lg font-semibold tracking-tight">Good2Go</span>
           <span className="hidden md:inline text-white/80">Recover Smart. Return Strong.</span>
         </div>
-
         <nav className="flex items-center gap-3">
           <Link
             href="/book"
-            className="rounded-lg bg-white/95 text-sky-700 hover:bg-white px-4 py-2 text-sm font-medium shadow-sm"
+            className="btn btn-primary shadow-sm"
           >
             Book a Test
           </Link>
           <Link
             href="/admin/login"
-            className="rounded-lg border border-white/50 text-white hover:bg-white/10 px-4 py-2 text-sm font-medium"
+            className="btn btn-ghost"
           >
             Clinician/Admin Login
           </Link>
