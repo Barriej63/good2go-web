@@ -5,8 +5,8 @@ export default function Home() {
     <main className="max-w-4xl mx-auto px-4 py-12 text-center">
       <h1 className="text-4xl font-bold mb-4">Good2Go Concussion Assessments</h1>
       <p className="text-lg text-slate-600 mb-8">
-        Baseline and post-concussion monitoring led by clinicians. 
-        Simple online booking and secure results sharing.
+        Baseline and post-concussion testing. 
+        Simple online booking form.
       </p>
 
       {/* Buttons underneath the text */}
