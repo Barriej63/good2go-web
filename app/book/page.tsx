@@ -9,7 +9,6 @@ import React, { useEffect, useMemo, useState } from 'react';
  * - Baseline ($65) = 1 date; Package ($199) = 4 weekly dates auto-selected
  * - Keeps Region/Time selects, consent short form, identity fields, redirect flow
  *
- * build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025-08-24
  */
 
 type SlotDef = {
