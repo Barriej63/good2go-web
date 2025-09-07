@@ -1,10 +1,9 @@
 import Link from 'next/link';
 import Image from 'next/image';
-import { getAdminRole } from '@/lib/adminAuth'; // uses next/headers internally (server OK)
+import { getAdminRole } from '@/lib/adminAuth'; // server-only helper (uses next/headers)
 
 export default async function SiteHeader() {
-  // Server-side: safe to read cookies / next/headers
-  const role = await getAdminRole(); // 'superadmin' | 'coach' | 'viewer' | null
+  const role = await getAdminRole(); // ok in server components
 
   return (
     <header className="border-b bg-white">
@@ -20,7 +19,9 @@ export default async function SiteHeader() {
             />
             <div className="leading-tight">
               <div className="font-extrabold text-[18px] text-slate-900">Good2Go</div>
-              <div className="text-[13px] text-slate-500">Concussion Assessments &amp; Monitoring</div>
+              <div className="text-[13px] text-slate-500">
+                Concussion Assessments &amp; Monitoring
+              </div>
             </div>
           </Link>
         </div>
