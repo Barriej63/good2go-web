@@ -4,23 +4,21 @@ import { getAdminRole } from '@/lib/adminAuth';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const role = await getAdminRole();
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="flex">
-        <Sidebar />
-        <div className="flex-1">
-          <header className="h-14 bg-white/90 backdrop-blur border-b border-slate-200 px-4 flex items-center justify-between">
-            <div className="text-sm text-slate-600">
-              Signed in as: <span className="font-medium capitalize">{role ?? 'unknown'}</span>
-            </div>
-            <LogoutButton />
-          </header>
-          <main className="p-6 max-w-[1200px] mx-auto">
-            {children}
-          </main>
-        </div>
+    <div className="min-h-[calc(100vh-56px)] flex"> {/* 56px = header height */}
+      <Sidebar />
+      <div className="flex-1 flex flex-col">
+        <header className="h-14 bg-gradient-to-r from-sky-600 to-sky-500 text-white px-4 flex items-center justify-between">
+          <div className="text-sm">
+            Signed in as: <span className="font-medium capitalize">{role ?? 'unknown'}</span>
+          </div>
+          <LogoutButton />
+        </header>
+        <main className="p-6 max-w-6xl mx-auto w-full">
+          {children}
+        </main>
       </div>
     </div>
   );
 }
+
