@@ -1,33 +1,23 @@
-import { NextResponse } from 'next/server';
+// middleware.ts (root of the repo)
 import type { NextRequest } from 'next/server';
-
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ''; // set in Vercel env
+import { NextResponse } from 'next/server';
 
 export function middleware(req: NextRequest) {
-  const { pathname, searchParams } = req.nextUrl;
+  const { pathname } = req.nextUrl;
 
-  // only guard /admin/*
-  if (!pathname.startsWith('/admin')) return NextResponse.next();
-
-  // allow access if cookie already set
-  const cookie = req.cookies.get('g2g_admin')?.value;
-  if (cookie && ADMIN_TOKEN && cookie === ADMIN_TOKEN) {
-    return NextResponse.next();
+  // Only protect /admin/* pages EXCEPT the login page itself
+  if (pathname.startsWith('/admin') && pathname !== '/admin/login') {
+    const token = req.cookies.get('g2g_admin')?.value;
+    if (!token || token !== process.env.ADMIN_TOKEN) {
+      const url = new URL('/admin/login', req.url);
+      return NextResponse.redirect(url);
+    }
   }
 
-  // allow one-time login by query ?token=... (we'll set the cookie and strip the query)
-  const token = searchParams.get('token');
-  if (token && ADMIN_TOKEN && token === ADMIN_TOKEN) {
-    const url = new URL(pathname, req.url); // same path, no query
-    const res = NextResponse.redirect(url);
-    res.cookies.set('g2g_admin', token, { httpOnly: true, secure: true, sameSite: 'strict', path: '/' });
-    return res;
-  }
-
-  // otherwise push to /admin/login
-  return NextResponse.redirect(new URL('/admin/login', req.url));
+  return NextResponse.next();
 }
 
 export const config = {
+  // Guard admin pages only; do NOT guard API here (routes already check auth)
   matcher: ['/admin/:path*'],
 };
