@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { getAdminDb } from '@/lib/firebaseAdmin';
+import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
 
 export const dynamic = 'force-dynamic';
 
 type SlotDef = {
   weekday: number;           // 0=Sun..6=Sat
-  start: string;
-  end: string;
+  start: string;             // 'HH:MM'
+  end: string;               // 'HH:MM'
   venueAddress?: string | null;
   note?: string | null;
 };
@@ -15,6 +15,8 @@ type SlotsOut = {
   regions: string[];
   slots: Record<string, SlotDef[]>;
 };
+
+/* ---------- helpers ---------- */
 
 function toWeekday(v: unknown): number | null {
   if (typeof v === 'number' && v >= 0 && v <= 6) return v;
@@ -40,11 +42,52 @@ function regionFromId(id: string): string | null {
   return m[1];
 }
 
+function cleanSlotLike(s: any): SlotDef | null {
+  const wd = toWeekday(s?.weekday ?? s?.weekdays);
+  const st = s?.start;
+  const en = s?.end;
+  if (wd == null || !st || !en) return null;
+  return {
+    weekday: wd,
+    start: String(st),
+    end: String(en),
+    venueAddress: typeof s?.venueAddress === 'string' ? s.venueAddress : null,
+    note: typeof s?.note === 'string' ? s.note : null,
+  };
+}
+
+/* ---------- GET ---------- */
+
 export async function GET() {
-  const db = getAdminDb();
-  const snap = await db.collection('config').get();
+  const db = getFirestoreSafe();
+  if (!db) {
+    // soft-fail: empty config
+    const empty: SlotsOut = { regions: [], slots: {} };
+    return NextResponse.json(empty, { status: 200 });
+  }
 
   const out: SlotsOut = { regions: [], slots: {} };
+
+  // 1) Try the new single-doc config: config/settings
+  const settingsSnap = await db.collection('config').doc('settings').get();
+  if (settingsSnap.exists) {
+    const data = settingsSnap.data() || {};
+    const regions: string[] = Array.isArray(data.regions) ? data.regions : [];
+    const rawSlots: Record<string, any[]> = (data.slots || {}) as Record<string, any[]>;
+    // const venues: Record<string, string[]> = (data.venues || {}) as Record<string, string[]>; // available if needed
+
+    for (const r of regions) {
+      const arr = Array.isArray(rawSlots?.[r]) ? rawSlots[r] : [];
+      out.slots[r] = arr
+        .map(cleanSlotLike)
+        .filter(Boolean) as SlotDef[];
+    }
+    out.regions = Object.keys(out.slots).sort((a, b) => a.localeCompare(b));
+    return NextResponse.json(out, { status: 200 });
+  }
+
+  // 2) Fallback: legacy multi-doc layout under /config (timeslots_<Region> docs)
+  const snap = await db.collection('config').get();
 
   for (const doc of snap.docs) {
     const rawId = doc.id;
@@ -54,38 +97,18 @@ export async function GET() {
     const data = doc.data() as any;
     const list: SlotDef[] = [];
 
-    const push = (s: SlotDef) => list.push(s);
-
     // Style A: explicit array
     if (Array.isArray(data?.slots)) {
       for (const it of data.slots as any[]) {
-        const wd = toWeekday(it?.weekday ?? it?.weekdays);
-        const st = it?.start;
-        const en = it?.end;
-        if (wd == null || !st || !en) continue;
-        push({
-          weekday: wd,
-          start: String(st),
-          end: String(en),
-          venueAddress: it?.venueAddress ?? null,
-          note: it?.note ?? null,
-        });
+        const cleaned = cleanSlotLike(it);
+        if (cleaned) list.push(cleaned);
       }
     }
 
     // Style B: single top-level fields
-    const wdTop = toWeekday(data?.weekday ?? data?.weekdays);
-    if (wdTop != null && data?.start && data?.end) {
-      push({
-        weekday: wdTop,
-        start: String(data.start),
-        end: String(data.end),
-        venueAddress: data?.venueAddress ?? null,
-        note: data?.note ?? null,
-      });
-    }
+    const cleanedTop = cleanSlotLike(data);
+    if (cleanedTop) list.push(cleanedTop);
 
-    // Ensure the region is present even if no valid slots
     out.slots[region] = list;
   }
 
