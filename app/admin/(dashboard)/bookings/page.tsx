@@ -1,135 +1,194 @@
 'use client';
-
-import { useEffect, useState } from 'react';
-
-// Firestore Timestamp type guard (works whether the object is plain or coming from SDK)
-function isFSTimestamp(x: any): x is { toDate: () => Date } {
-  return x && typeof x === 'object' && typeof x.toDate === 'function';
-}
-
-// Robust date -> string
-function fmtWhen(x: any): string {
-  if (!x) return '';
-  try {
-    if (typeof x === 'string') return x;
-    if (isFSTimestamp(x)) return x.toDate().toISOString();
-    // sometimes createdAt is ISO-like or millis
-    if (typeof x === 'number') return new Date(x).toISOString();
-    if (x.seconds) return new Date(x.seconds * 1000).toISOString();
-  } catch {}
-  return String(x ?? '');
-}
-
-function fmtSlot(slot: any, row: any): string {
-  // slot as string
-  if (typeof slot === 'string') return slot;
-
-  // slot as object { weekday, start, end, venueAddress, note }
-  if (slot && typeof slot === 'object') {
-    const start = slot.start ?? row?.start ?? '';
-    const end = slot.end ?? row?.end ?? '';
-    const dateISO = row?.dateISO ?? '';
-    const venue = slot.venueAddress ?? row?.venueAddress ?? '';
-    const time = end ? `${start}–${end}` : start || '';
-    const core = [dateISO, time].filter(Boolean).join(' ');
-    return [core, venue].filter(Boolean).join(' @ ');
-  }
-
-  // derive from row fields if present
-  const start = row?.start ?? '';
-  const end = row?.end ?? '';
-  const dateISO = row?.dateISO ?? '';
-  const time = end ? `${start}–${end}` : start || '';
-  return [dateISO, time].filter(Boolean).join(' ');
-}
+import React, { useEffect, useMemo, useState } from 'react';
+import { redirect } from 'next/navigation';
+import { isAdminCookie } from '@/lib/adminAuth';
 
 type Booking = {
   id: string;
-  createdAt?: any;      // string | Timestamp | number
+  createdAt?: string;   // ISO
   name?: string;
   email?: string;
   region?: string;
-  slot?: any;           // string | object
-  dateISO?: string;
-  start?: string;
-  end?: string;
-  venueAddress?: string;
-  reminderSent?: boolean;
+  slot?: string;        // "YYYY-MM-DD HH:MM–HH:MM"
+  venue?: string;
+  packageType?: string; // baseline | package4
 };
 
+type AdminConfig = {
+  regions?: string[];
+  timeslots?: any;
+};
+
+const pageWrap: React.CSSProperties = { background: '#f1f5f9', minHeight: '100%' };
+const mainWrap: React.CSSProperties = { maxWidth: 1120, margin: '0 auto', padding: '32px 20px 80px' };
+const card: React.CSSProperties = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,.04)', marginBottom: 24 };
+const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWeight: 600, color: '#334155', marginBottom: 8 };
+const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid #cbd5e1', borderRadius: 12, padding: '10px 12px', height: 42, fontSize: 14 };
+
+function useGate() {
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  useEffect(() => {
+    (async () => {
+      const ok = await isAdminCookie();
+      setAllowed(!!ok);
+    })();
+  }, []);
+  return allowed;
+}
+
 export default function BookingsPage() {
-  const [items, setItems] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // (Client component cannot redirect synchronously; we soft gate)
+  const allowed = useGate();
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    try {
-      const r = await fetch('/api/admin/bookings', { cache: 'no-store' });
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-      const j = await r.json();
-      const list: Booking[] = Array.isArray(j.items) ? j.items : [];
-      setItems(list);
-    } catch (e: any) {
-      console.error('Bookings load failed:', e);
-      setError('Could not load bookings.');
-    } finally {
-      setLoading(false);
+  const [regions, setRegions] = useState<string[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+
+  const [regionFilter, setRegionFilter] = useState<string>('all');
+  const [dateFilter, setDateFilter] = useState<string>(''); // YYYY-MM-DD
+  const [showCount, setShowCount] = useState(20);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [cfgRes, bRes] = await Promise.all([
+          fetch('/api/admin/config', { cache: 'no-store' }),
+          fetch('/api/admin/bookings?limit=200', { cache: 'no-store' }) // newest first
+        ]);
+        const cfg: AdminConfig = (await cfgRes.json()) || {};
+        const bJson = await bRes.json();
+        setRegions(Array.isArray(cfg.regions) ? cfg.regions : []);
+        const items: Booking[] = Array.isArray(bJson?.items) ? bJson.items : [];
+        setBookings(items);
+      } catch (e) {
+        console.error('load admin data failed', e);
+      }
+    })();
+  }, []);
+
+  const filtered = useMemo(() => {
+    let list = bookings;
+    if (regionFilter !== 'all') {
+      list = list.filter(b => (b.region || '').toLowerCase() === regionFilter.toLowerCase());
     }
-  }
+    if (dateFilter) {
+      list = list.filter(b => {
+        // accept either b.slot starts with 'YYYY-MM-DD' or createdAt date
+        const slotDate = (b.slot || '').slice(0, 10);
+        const createdDate = (b.createdAt || '').slice(0, 10);
+        return slotDate === dateFilter || createdDate === dateFilter;
+      });
+    }
+    return list;
+  }, [bookings, regionFilter, dateFilter]);
 
-  useEffect(() => { load(); }, []);
+  const visible = filtered.slice(0, showCount);
+
+  if (allowed === false) {
+    // SSR redirect not available in client, so just nudge them
+    if (typeof window !== 'undefined') window.location.href = '/admin/login';
+    return null;
+  }
+  if (allowed === null) return null;
 
   return (
-    <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <div>
-          <h1 className="text-xl font-semibold">Bookings</h1>
-          <p className="text-xs text-slate-500">{items.length} records</p>
-        </div>
-        <button onClick={load} className="btn btn-ghost">Refresh</button>
-      </div>
+    <div style={pageWrap}>
+      <main style={mainWrap}>
+        <header style={{ marginBottom: 24 }}>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#0f172a' }}>Bookings</h1>
+          <p style={{ marginTop: 8, color: '#475569' }}>
+            Newest bookings appear first. Filter by region and date, and load more as needed.
+          </p>
+        </header>
 
-      {loading && <div className="text-sm text-slate-600">Loading…</div>}
-      {error && <div className="text-sm text-rose-600">{error}</div>}
+        {/* Filters */}
+        <section style={card}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 16 }}>
+            <div>
+              <label style={labelStyle}>Region</label>
+              <select
+                style={inputStyle}
+                value={regionFilter}
+                onChange={(e) => { setRegionFilter(e.target.value); setShowCount(20); }}
+              >
+                <option value="all">All regions</option>
+                {regions.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Date</label>
+              <input
+                type="date"
+                style={inputStyle}
+                value={dateFilter}
+                onChange={(e) => { setDateFilter(e.target.value); setShowCount(20); }}
+              />
+            </div>
+          </div>
+        </section>
 
-      {!loading && !error && (
-        items.length ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-[960px] w-full text-sm">
+        {/* Table */}
+        <section style={card}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr className="bg-slate-50 text-slate-700">
-                  <th className="px-3 py-2 text-left font-medium">When</th>
-                  <th className="px-3 py-2 text-left font-medium">Name</th>
-                  <th className="px-3 py-2 text-left font-medium">Email</th>
-                  <th className="px-3 py-2 text-left font-medium">Region</th>
-                  <th className="px-3 py-2 text-left font-medium">Slot</th>
-                  <th className="px-3 py-2 text-left font-medium">Reminder</th>
+                <tr style={{ background: '#f8fafc', textAlign: 'left' }}>
+                  <th style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>When</th>
+                  <th style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>Client</th>
+                  <th style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>Email</th>
+                  <th style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>Region</th>
+                  <th style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>Slot</th>
+                  <th style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>Venue</th>
+                  <th style={{ padding: '10px 12px', borderBottom: '1px solid #e5e7eb' }}>Package</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {items.map(b => (
-                  <tr key={b.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2">{fmtWhen(b.createdAt)}</td>
-                    <td className="px-3 py-2">{b.name ?? ''}</td>
-                    <td className="px-3 py-2">{b.email ?? ''}</td>
-                    <td className="px-3 py-2">{String(b.region ?? '')}</td>
-                    <td className="px-3 py-2">{fmtSlot(b.slot, b)}</td>
-                    <td className="px-3 py-2">
-                      {b.reminderSent
-                        ? <span className="inline-flex items-center rounded-full bg-emerald-50 text-emerald-700 px-2 py-0.5 text-xs">Sent</span>
-                        : <span className="inline-flex items-center rounded-full bg-amber-50 text-amber-700 px-2 py-0.5 text-xs">Pending</span>}
+              <tbody>
+                {visible.map((b) => (
+                  <tr key={b.id}>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>
+                      {b.createdAt || '-'}
                     </td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.name || '-'}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.email || '-'}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.region || '-'}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.slot || '-'}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.venue || '-'}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.packageType || '-'}</td>
                   </tr>
                 ))}
+                {!visible.length && (
+                  <tr>
+                    <td colSpan={7} style={{ padding: '14px 12px', color: '#64748b' }}>
+                      No bookings match your filters.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="text-sm text-slate-600">No bookings yet.</div>
-        )
-      )}
-    </section>
+
+          {/* Load more */}
+          {visible.length < filtered.length && (
+            <div style={{ marginTop: 16 }}>
+              <button
+                onClick={() => setShowCount((n) => n + 20)}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: 10,
+                  background: '#0284c7',
+                  color: '#fff',
+                  border: 0,
+                  cursor: 'pointer'
+                }}
+              >
+                View more
+              </button>
+              <span style={{ marginLeft: 12, color: '#64748b', fontSize: 14 }}>
+                Showing {visible.length} of {filtered.length}
+              </span>
+            </div>
+          )}
+        </section>
+      </main>
+    </div>
   );
 }
