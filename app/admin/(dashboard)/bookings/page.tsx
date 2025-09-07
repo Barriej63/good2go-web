@@ -2,13 +2,54 @@
 
 import { useEffect, useState } from 'react';
 
+// Firestore Timestamp type guard (works whether the object is plain or coming from SDK)
+function isFSTimestamp(x: any): x is { toDate: () => Date } {
+  return x && typeof x === 'object' && typeof x.toDate === 'function';
+}
+
+// Robust date -> string
+function fmtWhen(x: any): string {
+  if (!x) return '';
+  try {
+    if (typeof x === 'string') return x;
+    if (isFSTimestamp(x)) return x.toDate().toISOString();
+    // sometimes createdAt is ISO-like or millis
+    if (typeof x === 'number') return new Date(x).toISOString();
+    if (x.seconds) return new Date(x.seconds * 1000).toISOString();
+  } catch {}
+  return String(x ?? '');
+}
+
+function fmtSlot(slot: any, row: any): string {
+  // slot as string
+  if (typeof slot === 'string') return slot;
+
+  // slot as object { weekday, start, end, venueAddress, note }
+  if (slot && typeof slot === 'object') {
+    const start = slot.start ?? row?.start ?? '';
+    const end = slot.end ?? row?.end ?? '';
+    const dateISO = row?.dateISO ?? '';
+    const venue = slot.venueAddress ?? row?.venueAddress ?? '';
+    const time = end ? `${start}–${end}` : start || '';
+    const core = [dateISO, time].filter(Boolean).join(' ');
+    return [core, venue].filter(Boolean).join(' @ ');
+  }
+
+  // derive from row fields if present
+  const start = row?.start ?? '';
+  const end = row?.end ?? '';
+  const dateISO = row?.dateISO ?? '';
+  const time = end ? `${start}–${end}` : start || '';
+  return [dateISO, time].filter(Boolean).join(' ');
+}
+
 type Booking = {
   id: string;
-  createdAt?: string;
+  createdAt?: any;      // string | Timestamp | number
   name?: string;
   email?: string;
   region?: string;
-  slot?: string;
+  slot?: any;           // string | object
   dateISO?: string;
   start?: string;
   end?: string;
@@ -28,7 +69,8 @@ export default function BookingsPage() {
       const r = await fetch('/api/admin/bookings', { cache: 'no-store' });
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       const j = await r.json();
-      setItems(Array.isArray(j.items) ? j.items : []);
+      const list: Booking[] = Array.isArray(j.items) ? j.items : [];
+      setItems(list);
     } catch (e: any) {
       console.error('Bookings load failed:', e);
       setError('Could not load bookings.');
@@ -69,13 +111,11 @@ export default function BookingsPage() {
               <tbody className="divide-y divide-slate-100">
                 {items.map(b => (
                   <tr key={b.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2">{b.createdAt || ''}</td>
-                    <td className="px-3 py-2">{b.name || ''}</td>
-                    <td className="px-3 py-2">{b.email || ''}</td>
-                    <td className="px-3 py-2">{b.region || ''}</td>
-                    <td className="px-3 py-2">
-                      {b.slot || (b.dateISO && b.start ? `${b.dateISO} ${b.start}${b.end ? `–${b.end}`:''}` : '')}
-                    </td>
+                    <td className="px-3 py-2">{fmtWhen(b.createdAt)}</td>
+                    <td className="px-3 py-2">{b.name ?? ''}</td>
+                    <td className="px-3 py-2">{b.email ?? ''}</td>
+                    <td className="px-3 py-2">{String(b.region ?? '')}</td>
+                    <td className="px-3 py-2">{fmtSlot(b.slot, b)}</td>
                     <td className="px-3 py-2">
                       {b.reminderSent
                         ? <span className="inline-flex items-center rounded-full bg-emerald-50 text-emerald-700 px-2 py-0.5 text-xs">Sent</span>
