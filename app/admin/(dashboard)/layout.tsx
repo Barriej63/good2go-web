@@ -4,7 +4,6 @@ import { getAdminRole } from '@/lib/adminAuth';
 
 export default async function AdminDashboardLayout({ children }: { children: React.ReactNode }) {
   const role = await getAdminRole();
-
   return (
     <div className="min-h-[calc(100vh-56px)] flex">
       <Sidebar />
