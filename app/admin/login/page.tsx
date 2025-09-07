@@ -1,3 +1,5 @@
+'use client';
+
 import { redirect } from 'next/navigation';
 import { isAdminCookie, getAdminRole } from '@/lib/adminAuth';
 
