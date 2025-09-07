@@ -1,3 +1,4 @@
+// components/admin/LogoutButton.tsx
 'use client';
 
 export default function LogoutButton() {
@@ -8,7 +9,7 @@ export default function LogoutButton() {
   return (
     <button
       onClick={doLogout}
-      className="rounded-lg bg-rose-500 hover:bg-rose-600 text-white px-3 py-2 text-sm shadow-sm"
+      className="btn btn-ghost border-white/40 text-white hover:bg-white/10"
     >
       Logout
     </button>
