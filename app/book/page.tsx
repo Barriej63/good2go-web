@@ -9,7 +9,7 @@ import React, { useEffect, useMemo, useState } from 'react';
  * - Baseline ($65) = 1 date; Package ($199) = 4 weekly dates auto-selected
  * - Keeps Region/Time selects, consent short form, identity fields, redirect flow
  *
- * build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025‑08‑24
+ * build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025-08-24
  */
 
 type SlotDef = {
@@ -166,10 +166,12 @@ export default function Page(){
       aspectRatio: '1 / 1',
       display: 'grid',
       placeItems: 'center',
-      borderRadius: 8,
+      borderRadius: 10,
       border: '1px solid #e5e7eb',
       fontSize: 12,
-      userSelect: 'none'
+      userSelect: 'none',
+      transition: 'all .15s ease',
+      boxShadow: '0 0 0 0 rgba(2,132,199,0)',
     };
     let style: React.CSSProperties = { ...base };
     if (!inMonth){
@@ -177,16 +179,17 @@ export default function Page(){
       style.borderColor = 'transparent';
     } else if (allowed){
       style.cursor = 'pointer';
-      style.background = '#fff';
+      style.background = '#ffffff';
     } else {
       style.color = '#9ca3af';
-      style.background = '#f9fafb';
+      style.background = '#f8fafc';
     }
     if (picked){
-      style.background = '#111827';
+      style.background = '#0369a1'; // sky-700
       style.color = '#fff';
-      style.borderColor = '#111827';
+      style.borderColor = '#0369a1';
       style.fontWeight = 600;
+      style.boxShadow = '0 0 0 2px rgba(2,132,199,.25) inset';
     }
 
     return <div style={style} onClick={()=> allowed && pick(d)} title={iso} aria-disabled={!allowed}>{d.getDate()}</div>;
@@ -211,140 +214,173 @@ export default function Page(){
   }
 
   return (
-    <main className="max-w-4xl mx-auto px-4 py-8">
-      <style>{`
-        /* Guaranteed calendar layout (no dependency on global CSS) */
-        .cal-wrap {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-          gap: 16px;
-        }
-        .cal-month {
-          border: 1px solid #e5e7eb;
-          border-radius: 16px;
-          padding: 16px;
-          background: #fff;
-        }
-        .cal-title {
-          font-size: 1.125rem;
-          font-weight: 600;
-          margin-bottom: 8px;
-        }
-        .cal-dow {
-          display: grid;
-          grid-template-columns: repeat(7, minmax(0, 1fr));
-          gap: 6px;
-          text-align: center;
-          color: #6b7280;
-          font-size: 12px;
-          margin-bottom: 6px;
-        }
-        .cal-dow-cell { padding: 4px 0; }
-        .cal-grid {
-          display: grid !important;
-          grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
-          gap: 6px !important;
-        }
-      `}</style>
+    <div className="bg-slate-50">
+      <main className="max-w-6xl mx-auto px-4 py-10">
+        <style>{`
+          /* Guaranteed calendar layout (no dependency on global CSS) */
+          .cal-wrap {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 18px;
+          }
+          .cal-month {
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            padding: 16px;
+            background: #fff;
+            box-shadow: 0 1px 2px rgba(0,0,0,.04);
+          }
+          .cal-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+          }
+          .cal-dow {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 6px;
+            text-align: center;
+            color: #64748b; /* slate-500 */
+            font-size: 12px;
+            margin-bottom: 6px;
+          }
+          .cal-dow-cell { padding: 4px 0; }
+          .cal-grid {
+            display: grid !important;
+            grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+            gap: 6px !important;
+          }
+        `}</style>
 
-      <div className="text-xs text-gray-500 mb-3">build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025‑08‑24</div>
-      <h1 className="text-3xl font-bold mb-6">Book a Good2Go Assessment</h1>
+        <div className="text-xs text-slate-500 mb-3">
+          build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025-08-24
+        </div>
 
-      {/* Package options */}
-      <div className="mb-4 flex flex-wrap items-center gap-6">
-        <label className="inline-flex items-center gap-2">
-          <input type="radio" name="pkg" checked={pkg==='baseline'} onChange={()=>setPkg('baseline')} />
-          <span>Baseline — <span className="font-semibold">$65</span></span>
-        </label>
-        <label className="inline-flex items-center gap-2">
-          <input type="radio" name="pkg" checked={pkg==='package4'} onChange={()=>setPkg('package4')} />
-          <span>Package (4 weekly sessions) — <span className="font-semibold">$199</span></span>
-        </label>
-      </div>
+        <header className="mb-6">
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Book a Good2Go Assessment</h1>
+          <p className="text-slate-600 mt-2">Select product, region and time, then complete consent to proceed to payment.</p>
+        </header>
 
-      {/* Region & Time */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div>
-          <label className="block text-sm font-medium mb-1">Region</label>
-          <select className="w-full border rounded-xl px-3 py-2"
-            value={region}
-            onChange={(e)=>{ setRegion(e.target.value); setSlotIdx(0); setSelectedDates([]); }}>
-            {(slotsData.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Time</label>
-          <select className="w-full border rounded-xl px-3 py-2"
-            value={String(slotIdx)}
-            onChange={(e)=>{ setSlotIdx(Number(e.target.value)); setSelectedDates([]); }}
-            disabled={!(slotsData.slots[region] || []).length}>
-            {(slotsData.slots[region] || []).map((s, i) => (
-              <option key={i} value={i}>{s.start}–{s.end}</option>
-            ))}
-          </select>
-        </div>
-      </div>
+        {/* Package options */}
+        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
+          <div className="flex flex-wrap items-center gap-6">
+            <label className="inline-flex items-center gap-2">
+              <input type="radio" name="pkg" checked={pkg==='baseline'} onChange={()=>setPkg('baseline')} className="accent-sky-600" />
+              <span className="font-medium">Baseline — <span className="text-slate-700">$65</span></span>
+            </label>
+            <label className="inline-flex items-center gap-2">
+              <input type="radio" name="pkg" checked={pkg==='package4'} onChange={()=>setPkg('package4')} className="accent-sky-600" />
+              <span className="font-medium">Package (4 weekly sessions) — <span className="text-slate-700">$199</span></span>
+            </label>
+          </div>
+        </section>
 
-      {/* Calendar two months */}
-      <div className="cal-wrap">
-        <Month base={monthA} />
-        <Month base={monthB} />
-      </div>
+        {/* Region & Time */}
+        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1 text-slate-700">Region</label>
+              <select
+                className="w-full border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                value={region}
+                onChange={(e)=>{ setRegion(e.target.value); setSlotIdx(0); setSelectedDates([]); }}>
+                {(slotsData.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 text-slate-700">Time</label>
+              <select
+                className="w-full border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                value={String(slotIdx)}
+                onChange={(e)=>{ setSlotIdx(Number(e.target.value)); setSelectedDates([]); }}
+                disabled={!(slotsData.slots[region] || []).length}>
+                {(slotsData.slots[region] || []).map((s, i) => (
+                  <option key={i} value={i}>{s.start}–{s.end}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {slot?.venueAddress && (
+            <p className="text-xs text-slate-500 mt-3">
+              Venue: <span className="font-medium text-slate-700">{slot.venueAddress}</span>
+              {slot.note ? <span> — {slot.note}</span> : null}
+            </p>
+          )}
+        </section>
 
-      {/* Selected summary */}
-      {selectedDates.length > 0 && (
-        <div className="mb-6 text-sm">
-          <div className="font-medium mb-1">Selected date{selectedDates.length>1?'s':''}:</div>
-          <ul className="list-disc ml-6">{selectedDates.map(d => <li key={d}>{d}</li>)}</ul>
-        </div>
-      )}
+        {/* Calendar two months */}
+        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
+          <div className="cal-wrap">
+            <Month base={monthA} />
+            <Month base={monthB} />
+          </div>
+        </section>
 
-      {/* Identity fields */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Client Name</label>
-          <input className="border rounded-xl px-3 py-2 w-full" value={clientName} onChange={e=>setClientName(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Your Email</label>
-          <input type="email" className="border rounded-xl px-3 py-2 w-full" value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Medical Professional Name (optional)</label>
-          <input className="border rounded-xl px-3 py-2 w-full" value={medName} onChange={e=>setMedName(e.target.value)} />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Medical Professional Email (optional)</label>
-          <input type="email" className="border rounded-xl px-3 py-2 w-full" value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
-        </div>
-      </div>
+        {/* Selected summary */}
+        {selectedDates.length > 0 && (
+          <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
+            <div className="text-sm">
+              <div className="font-medium mb-1">Selected date{selectedDates.length>1?'s':''}:</div>
+              <ul className="list-disc ml-6 space-y-1">{selectedDates.map(d => <li key={d}>{d}</li>)}</ul>
+            </div>
+          </section>
+        )}
 
-      {/* Consent */}
-      <section className="mt-8 p-5 border rounded-2xl bg-white">
-        <h3 className="text-lg font-semibold mb-2">Consent & Disclosure</h3>
-        <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1">
-          <li>I consent to Good2Go sharing relevant assessment results with my nominated referring medical professional for the purpose of ongoing care.</li>
-          <li>I understand I can revoke consent at any time in writing, except where action has already been taken based on this consent.</li>
-          <li>I acknowledge Good2Go is a clinical decision support (CDS) tool, not a diagnostic instrument.</li>
-        </ul>
-        <p className="text-sm text-gray-600 mt-2">Read the full agreement at <a href="/consent" className="underline">/consent</a>. Version: 2025‑08‑24</p>
-        <label className="flex items-start gap-3 mt-4">
-          <input type="checkbox" className="mt-1 h-4 w-4" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} />
-          <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
-        </label>
-        <div className="mt-3 max-w-sm">
-          <label className="block text-sm font-medium">Full Name (type to sign)</label>
-          <input className="mt-1 w-full rounded-xl border px-3 py-2" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
-        </div>
-      </section>
+        {/* Identity fields */}
+        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-1 text-slate-700">Client Name</label>
+              <input className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={clientName} onChange={e=>setClientName(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 text-slate-700">Your Email</label>
+              <input type="email" className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 text-slate-700">Medical Professional Name (optional)</label>
+              <input className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medName} onChange={e=>setMedName(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 text-slate-700">Medical Professional Email (optional)</label>
+              <input type="email" className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
+            </div>
+          </div>
 
-      <div className="mt-6 flex gap-3">
-        <button onClick={handleContinue} disabled={!canContinue || processing}
-          className={`px-4 py-2 rounded-xl text-white ${canContinue? 'bg-black':'bg-gray-400 cursor-not-allowed'}`}>
-          {processing? 'Processing…':'Continue to Payment'}
-        </button>
-        <a className="px-4 py-2 rounded-xl border" href="/">Cancel</a>
-      </div>
-    </main>
+          {/* Consent */}
+          <section className="mt-8 p-5 border rounded-2xl bg-white">
+            <h3 className="text-lg font-semibold mb-2">Consent & Disclosure</h3>
+            <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
+              <li>I consent to Good2Go sharing relevant assessment results with my nominated referring medical professional for the purpose of ongoing care.</li>
+              <li>I understand I can revoke consent at any time in writing, except where action has already been taken based on this consent.</li>
+              <li>I acknowledge Good2Go is a clinical decision support (CDS) tool, not a diagnostic instrument.</li>
+            </ul>
+            <p className="text-sm text-slate-600 mt-2">Read the full agreement at <a href="/consent" className="underline">/consent</a>. Version: 2025-08-24</p>
+            <label className="flex items-start gap-3 mt-4">
+              <input type="checkbox" className="mt-1 h-4 w-4 accent-sky-600" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} />
+              <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
+            </label>
+            <div className="mt-3 max-w-sm">
+              <label className="block text-sm font-medium">Full Name (type to sign)</label>
+              <input className="mt-1 w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
+            </div>
+          </section>
+        </section>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <button
+            onClick={handleContinue}
+            disabled={!canContinue || processing}
+            className={[
+              'px-5 py-2.5 rounded-xl text-white shadow-sm transition',
+              canContinue ? 'bg-sky-600 hover:bg-sky-700' : 'bg-slate-400 cursor-not-allowed'
+            ].join(' ')}
+          >
+            {processing? 'Processing…':'Continue to Payment'}
+          </button>
+          <a className="px-5 py-2.5 rounded-xl border bg-white hover:bg-slate-50 text-slate-700" href="/">Cancel</a>
+        </div>
+      </main>
+    </div>
   );
 }
