@@ -6,6 +6,7 @@ import {
   addRegion, removeRegion,
   addVenue, removeVenue,
   addSlot, updateSlot, removeSlot,
+  generateGridSlots, isValidHHMM
 } from './ConfigEditor.helpers';
 
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -13,24 +14,25 @@ const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 type Props = { canEdit: boolean };
 
 export default function ConfigEditor({ canEdit }: Props) {
-  // ---------- state ----------
+  // state
   const [cfg, setCfg] = useState<SettingsDoc>({ regions: [], slots: {}, venues: {} });
   const [region, setRegion] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [filter, setFilter] = useState(''); // quick search for venues/slots
+  const [filter, setFilter] = useState('');
+  // generator controls
+  const [gWeekday, setGWeekday] = useState(1);
+  const [gStart, setGStart] = useState('17:30');
+  const [gEnd, setGEnd] = useState('20:30');
+  const [gStep, setGStep] = useState(10);
+  const [gVenue, setGVenue] = useState('');
 
-  // ---------- load on mount ----------
+  // load
   useEffect(() => {
     (async () => {
       setLoading(true);
       const r = await fetch('/api/admin/config', { cache: 'no-store' });
-      if (!r.ok) {
-        setLoading(false);
-        alert('Failed to load configuration.');
-        return;
-      }
       const j = await r.json();
       const loaded: SettingsDoc = {
         regions: j.regions || [],
@@ -38,13 +40,12 @@ export default function ConfigEditor({ canEdit }: Props) {
         venues: j.venues || {},
       };
       setCfg(loaded);
-      setRegion((loaded.regions[0] || ''));
+      setRegion(loaded.regions[0] || '');
       setLoading(false);
       setDirty(false);
     })();
   }, []);
 
-  // ---------- save ----------
   async function save() {
     setSaving(true);
     const r = await fetch('/api/admin/config', {
@@ -53,15 +54,18 @@ export default function ConfigEditor({ canEdit }: Props) {
       body: JSON.stringify(cfg),
     });
     setSaving(false);
-    if (!r.ok) {
-      const text = await r.text();
-      alert(`Save failed: ${text || r.status}`);
-      return;
-    }
-    setDirty(false);
+    if (!r.ok) alert('Save failed');
+    else setDirty(false);
   }
 
-  // ---------- derived ----------
+  function withDirty(fn: (prev: SettingsDoc) => SettingsDoc) {
+    setCfg(prev => {
+      const next = fn(prev);
+      if (next !== prev) setDirty(true);
+      return next;
+    });
+  }
+
   const venues = useMemo(() => (cfg.venues?.[region] || []), [cfg, region]);
   const slots = useMemo(() => (cfg.slots?.[region] || []), [cfg, region]);
 
@@ -79,16 +83,6 @@ export default function ConfigEditor({ canEdit }: Props) {
     );
   }, [slots, filter]);
 
-  // ---------- helpers that also set dirty ----------
-  function withDirty<T>(fn: (prev: SettingsDoc) => SettingsDoc) {
-    setCfg(prev => {
-      const next = fn(prev);
-      if (next !== prev) setDirty(true);
-      return next;
-    });
-  }
-
-  // ---------- UI ----------
   if (loading) return <div className="text-sm text-slate-600">Loading configuration…</div>;
 
   return (
@@ -119,74 +113,74 @@ export default function ConfigEditor({ canEdit }: Props) {
         </div>
       </div>
 
-      {/* Regions */}
+      {/* Region selector + add */}
       <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-medium">Regions</h2>
-          <div className="flex gap-2">
-            {canEdit && (
-              <button
-                className="btn btn-ghost"
-                onClick={() => {
-                  const name = prompt('New region name?')?.trim();
-                  if (!name) return;
-                  withDirty(doc => addRegion(doc, name));
-                  setRegion(name);
-                }}
-              >
-                Add region
-              </button>
-            )}
-            {canEdit && region && (
-              <button
-                className="btn btn-ghost"
-                onClick={() => {
-                  if (!confirm(`Remove region "${region}"? This removes its venues and slots.`)) return;
-                  withDirty(doc => removeRegion(doc, region));
-                  setRegion((cfg.regions.find(r => r !== region) || '') as string);
-                }}
-              >
-                Remove current
-              </button>
-            )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium mb-1">Region</label>
+            <select
+              value={region}
+              onChange={e=>setRegion(e.target.value)}
+              className="border rounded-lg px-3 py-2 w-full"
+            >
+              {(cfg.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div className="flex items-end gap-2">
+            <button
+              disabled={!canEdit}
+              className="btn btn-ghost"
+              onClick={() => {
+                const name = prompt('New region name?')?.trim();
+                if (!name) return;
+                withDirty(doc => addRegion(doc, name));
+                setRegion(name);
+              }}
+            >
+              Add region
+            </button>
+            <button
+              disabled={!canEdit || !region}
+              className="btn btn-ghost"
+              onClick={() => {
+                if (!region) return;
+                if (!confirm(`Remove region "${region}" and all its venues/slots?`)) return;
+                withDirty(doc => removeRegion(doc, region));
+                setRegion((cfg.regions.find(r => r !== region) || '') as string);
+              }}
+            >
+              Remove region
+            </button>
           </div>
         </div>
-
-        {cfg.regions.length ? (
-          <div className="flex flex-wrap gap-2">
-            {cfg.regions.map(r => (
-              <button
-                key={r}
-                onClick={()=>setRegion(r)}
-                className={`px-3 py-1 rounded-full text-sm ${r===region ? 'bg-emerald-600 text-white' : 'bg-slate-100 hover:bg-slate-200'}`}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-slate-500">No regions yet. {canEdit && 'Use “Add region” to create one.'}</p>
-        )}
       </section>
 
       {/* Venues */}
       <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-medium">Venues — {region || 'No region selected'}</h2>
-          {canEdit && region && (
+          <div className="flex gap-2">
+            <input
+              placeholder="Add a new venue/address…"
+              className="border rounded-lg px-3 py-2 text-sm"
+              disabled={!canEdit || !region}
+              value={gVenue}
+              onChange={e=>setGVenue(e.target.value)}
+            />
             <button
               className="btn btn-ghost"
+              disabled={!canEdit || !region || !gVenue.trim()}
               onClick={() => {
-                const v = prompt('New venue/address?')?.trim();
+                const v = gVenue.trim();
                 if (!v) return;
                 withDirty(doc => addVenue(doc, region, v));
+                setGVenue('');
               }}
             >
               Add venue
             </button>
-          )}
+          </div>
         </div>
-
         {!region ? (
           <p className="text-sm text-slate-500">Select a region first.</p>
         ) : filteredVenues.length ? (
@@ -210,16 +204,101 @@ export default function ConfigEditor({ canEdit }: Props) {
         )}
       </section>
 
-      {/* Timeslots */}
+      {/* Generator — 10-min grid etc. */}
+      <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
+        <h2 className="font-medium mb-3">Generate timeslots</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
+          <div>
+            <label className="block text-sm font-medium mb-1">Weekday</label>
+            <select
+              className="border rounded-lg px-3 py-2 w-full"
+              value={gWeekday}
+              onChange={e=>setGWeekday(Number(e.target.value))}
+              disabled={!canEdit || !region}
+            >
+              {DOW.map((d,i)=><option key={d} value={i}>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">From</label>
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
+              value={gStart}
+              onChange={e=>setGStart(e.target.value)}
+              placeholder="HH:MM"
+              disabled={!canEdit || !region}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Until</label>
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
+              value={gEnd}
+              onChange={e=>setGEnd(e.target.value)}
+              placeholder="HH:MM"
+              disabled={!canEdit || !region}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Step (mins)</label>
+            <input
+              type="number"
+              min={5}
+              step={5}
+              className="border rounded-lg px-3 py-2 w-full"
+              value={gStep}
+              onChange={e=>setGStep(parseInt(e.target.value || '10', 10))}
+              disabled={!canEdit || !region}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium mb-1">Venue (optional)</label>
+            <select
+              className="border rounded-lg px-3 py-2 w-full mb-2"
+              value={gVenue}
+              onChange={e=>setGVenue(e.target.value)}
+              disabled={!canEdit || !region}
+            >
+              <option value="">— choose venue —</option>
+              {(cfg.venues?.[region] || []).map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+            {/* Allow typing a custom venue too */}
+            <input
+              className="border rounded-lg px-3 py-2 w-full"
+              placeholder="or type a custom venue…"
+              value={gVenue}
+              onChange={e=>setGVenue(e.target.value)}
+              disabled={!canEdit || !region}
+            />
+          </div>
+
+          <div className="sm:col-span-6">
+            <button
+              className="btn btn-primary"
+              disabled={!canEdit || !region || !isValidHHMM(gStart) || !isValidHHMM(gEnd) || gStep <= 0}
+              onClick={() => {
+                withDirty(doc => generateGridSlots(doc, region, {
+                  weekday: gWeekday,
+                  windowStart: gStart,
+                  windowEnd: gEnd,
+                  stepMinutes: gStep,
+                  venueAddress: gVenue || undefined,
+                }));
+              }}
+            >
+              Generate slots
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Existing Slots (editable) */}
       <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-medium">Timeslots — {region || 'No region selected'}</h2>
           {canEdit && region && (
-            <button
-              className="btn btn-ghost"
-              onClick={() => withDirty(doc => addSlot(doc, region))}
-            >
-              Add slot
+            <button className="btn btn-ghost" onClick={() => withDirty(doc => addSlot(doc, region))}>
+              Add single slot
             </button>
           )}
         </div>
@@ -229,7 +308,6 @@ export default function ConfigEditor({ canEdit }: Props) {
         ) : filteredSlots.length ? (
           <div className="space-y-2">
             {filteredSlots.map((s, i) => {
-              // map index back to the true index in cfg.slots[region]
               const trueIndex = slots.indexOf(s);
               return (
                 <div key={trueIndex} className="grid grid-cols-1 sm:grid-cols-6 gap-2 items-center">
@@ -285,4 +363,3 @@ export default function ConfigEditor({ canEdit }: Props) {
     </div>
   );
 }
-
