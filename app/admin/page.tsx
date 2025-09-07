@@ -1,3 +1,4 @@
+// app/admin/page.tsx
 import { redirect } from 'next/navigation';
 import { isAdminCookie } from '@/lib/adminAuth';
 
@@ -18,6 +19,4 @@ export default async function AdminHome() {
     </div>
   );
 }
-
-
 
