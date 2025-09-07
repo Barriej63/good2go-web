@@ -2,13 +2,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 /**
- * Booking page with a guaranteed inline-CSS two-month calendar grid.
+ * Booking page – style-only polish.
  * - Two months side-by-side (auto-stacks on small screens)
  * - Sun→Sat headers, square day cells
  * - Only allowed weekday is clickable
  * - Baseline ($65) = 1 date; Package ($199) = 4 weekly dates auto-selected
  * - Keeps Region/Time selects, consent short form, identity fields, redirect flow
- * - Build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025-08-24
  */
 
 type SlotDef = {
@@ -108,7 +107,14 @@ export default function Page(){
     }
   }
 
-  const canContinue = Boolean(slot && selectedDates.length && consentOK && consentName.trim().length>1 && clientName.trim().length>1 && yourEmail.trim().length>3);
+  const canContinue = Boolean(
+    slot &&
+    selectedDates.length &&
+    consentOK &&
+    consentName.trim().length>1 &&
+    clientName.trim().length>1 &&
+    yourEmail.trim().length>3
+  );
 
   async function handleContinue(){
     if (!slot || !canContinue) return;
@@ -165,9 +171,9 @@ export default function Page(){
       aspectRatio: '1 / 1',
       display: 'grid',
       placeItems: 'center',
-      borderRadius: 10,
+      borderRadius: 12,
       border: '1px solid #e5e7eb',
-      fontSize: 12,
+      fontSize: 13,
       userSelect: 'none',
       transition: 'all .15s ease',
       boxShadow: '0 0 0 0 rgba(2,132,199,0)',
@@ -214,78 +220,85 @@ export default function Page(){
 
   return (
     <div className="bg-slate-50">
-      <main className="max-w-6xl mx-auto px-4 py-10">
+      <main className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 py-12">
         <style>{`
-          /* Guaranteed calendar layout (no dependency on global CSS) */
+          /* Calendar layout (self-contained) */
           .cal-wrap {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 18px;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 22px;
           }
           .cal-month {
             border: 1px solid #e5e7eb;
             border-radius: 16px;
-            padding: 16px;
-            background: #fff;
+            padding: 18px;
+            background: #f0f9ff; /* sky-50 tint */
             box-shadow: 0 1px 2px rgba(0,0,0,.04);
           }
           .cal-title {
             font-size: 1.125rem;
-            font-weight: 600;
-            margin-bottom: 8px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            color: #0f172a; /* slate-900 */
           }
           .cal-dow {
             display: grid;
             grid-template-columns: repeat(7, minmax(0, 1fr));
-            gap: 6px;
+            gap: 8px;
             text-align: center;
             color: #64748b; /* slate-500 */
             font-size: 12px;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
           }
           .cal-dow-cell { padding: 4px 0; }
           .cal-grid {
             display: grid !important;
             grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
-            gap: 6px !important;
+            gap: 8px !important;
           }
         `}</style>
 
-        <header className="mb-6">
-          <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Book a Good2Go Assessment</h1>
-          <p className="text-slate-600 mt-2">Select product, region and time, then complete consent to proceed to payment.</p>
+        <header className="mb-8">
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Book a Good2Go Assessment</h1>
+          <p className="text-slate-600 mt-3 text-lg">
+            Select product, region and time, then complete consent to proceed to payment.
+          </p>
         </header>
 
         {/* Package options */}
-        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
-          <div className="flex flex-wrap items-center gap-6">
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-6">
+          <div className="flex flex-wrap items-center gap-x-10 gap-y-3">
             <label className="inline-flex items-center gap-2">
               <input type="radio" name="pkg" checked={pkg==='baseline'} onChange={()=>setPkg('baseline')} className="accent-sky-600" />
-              <span className="font-medium">Baseline — <span className="text-slate-700">$65</span></span>
+              <span className="font-medium text-slate-800">
+                Baseline — <span className="text-slate-900">$65</span>
+              </span>
             </label>
             <label className="inline-flex items-center gap-2">
               <input type="radio" name="pkg" checked={pkg==='package4'} onChange={()=>setPkg('package4')} className="accent-sky-600" />
-              <span className="font-medium">Package (4 weekly sessions) — <span className="text-slate-700">$199</span></span>
+              <span className="font-medium text-slate-800">
+                Package (4 weekly sessions) — <span className="text-slate-900">$199</span>
+              </span>
             </label>
           </div>
         </section>
 
         {/* Region & Time */}
-        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium mb-1 text-slate-700">Region</label>
+              <label className="block text-sm font-medium mb-2 text-slate-700">Region</label>
               <select
-                className="w-full border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                className="w-full border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
                 value={region}
                 onChange={(e)=>{ setRegion(e.target.value); setSlotIdx(0); setSelectedDates([]); }}>
                 {(slotsData.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1 text-slate-700">Time</label>
+              <label className="block text-sm font-medium mb-2 text-slate-700">Time</label>
               <select
-                className="w-full border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                className="w-full border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
                 value={String(slotIdx)}
                 onChange={(e)=>{ setSlotIdx(Number(e.target.value)); setSelectedDates([]); }}
                 disabled={!(slotsData.slots[region] || []).length}>
@@ -296,84 +309,86 @@ export default function Page(){
             </div>
           </div>
           {slot?.venueAddress && (
-            <p className="text-xs text-slate-500 mt-3">
-              Venue: <span className="font-medium text-slate-700">{slot.venueAddress}</span>
-              {slot.note ? <span> — {slot.note}</span> : null}
-            </p>
+            <div className="mt-4 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-slate-700 text-sm">
+              <span className="font-medium">Venue:</span> {slot.venueAddress}
+              {slot.note ? <span className="text-slate-600"> — {slot.note}</span> : null}
+            </div>
           )}
         </section>
 
         {/* Calendar two months */}
-        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
-          <div className="cal-wrap">
-            <Month base={monthA} />
-            <Month base={monthB} />
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-6">
+          <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-4">
+            <div className="cal-wrap">
+              <Month base={monthA} />
+              <Month base={monthB} />
+            </div>
           </div>
         </section>
 
         {/* Selected summary */}
         {selectedDates.length > 0 && (
-          <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5 mb-6">
+          <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-6">
             <div className="text-sm">
-              <div className="font-medium mb-1">Selected date{selectedDates.length>1?'s':''}:</div>
+              <div className="font-medium mb-2">Selected date{selectedDates.length>1?'s':''}:</div>
               <ul className="list-disc ml-6 space-y-1">{selectedDates.map(d => <li key={d}>{d}</li>)}</ul>
             </div>
           </section>
         )}
 
-        {/* Identity fields */}
-        <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Identity + Consent */}
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium mb-1 text-slate-700">Client Name</label>
-              <input className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={clientName} onChange={e=>setClientName(e.target.value)} />
+              <label className="block text-sm font-medium mb-2 text-slate-700">Client Name</label>
+              <input className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={clientName} onChange={e=>setClientName(e.target.value)} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1 text-slate-700">Your Email</label>
-              <input type="email" className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
+              <label className="block text-sm font-medium mb-2 text-slate-700">Your Email</label>
+              <input type="email" className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1 text-slate-700">Medical Professional Name (optional)</label>
-              <input className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medName} onChange={e=>setMedName(e.target.value)} />
+              <label className="block text-sm font-medium mb-2 text-slate-700">Medical Professional Name (optional)</label>
+              <input className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medName} onChange={e=>setMedName(e.target.value)} />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1 text-slate-700">Medical Professional Email (optional)</label>
-              <input type="email" className="border rounded-xl px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
+              <label className="block text-sm font-medium mb-2 text-slate-700">Medical Professional Email (optional)</label>
+              <input type="email" className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
             </div>
           </div>
 
           {/* Consent */}
-          <section className="mt-8 p-5 border rounded-2xl bg-white">
-            <h3 className="text-lg font-semibold mb-2">Consent & Disclosure</h3>
-            <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
+          <section className="mt-8 p-5 border rounded-2xl bg-slate-50">
+            <h3 className="text-lg font-semibold mb-3 text-slate-900">Consent &amp; Disclosure</h3>
+            <ul className="list-disc pl-5 text-[15px] text-slate-700 space-y-2">
               <li>I consent to Good2Go sharing relevant assessment results with my nominated referring medical professional for the purpose of ongoing care.</li>
               <li>I understand I can revoke consent at any time in writing, except where action has already been taken based on this consent.</li>
               <li>I acknowledge Good2Go is a clinical decision support (CDS) tool, not a diagnostic instrument.</li>
             </ul>
-            <p className="text-sm text-slate-600 mt-2">Read the full agreement at <a href="/consent" className="underline">/consent</a>. Version: 2025-08-24</p>
-            <label className="flex items-start gap-3 mt-4">
+            <p className="text-sm text-slate-600 mt-3">Read the full agreement at <a href="/consent" className="underline">/consent</a>. Version: 2025-08-24</p>
+            <label className="flex items-start gap-3 mt-5">
               <input type="checkbox" className="mt-1 h-4 w-4 accent-sky-600" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} />
               <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
             </label>
-            <div className="mt-3 max-w-sm">
-              <label className="block text-sm font-medium">Full Name (type to sign)</label>
-              <input className="mt-1 w-full rounded-xl border px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-300" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
+            <div className="mt-4 max-w-sm">
+              <label className="block text-sm font-medium mb-1">Full Name (type to sign)</label>
+              <input className="w-full rounded-xl border px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-300" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
             </div>
           </section>
         </section>
 
-        <div className="mt-6 flex flex-wrap gap-3">
+        <div className="mt-8 flex flex-wrap gap-4">
           <button
             onClick={handleContinue}
             disabled={!canContinue || processing}
             className={[
-              'px-5 py-2.5 rounded-xl text-white shadow-sm transition',
+              'px-6 py-3 rounded-xl text-white shadow-sm transition',
               canContinue ? 'bg-sky-600 hover:bg-sky-700' : 'bg-slate-400 cursor-not-allowed'
             ].join(' ')}
           >
             {processing? 'Processing…':'Continue to Payment'}
           </button>
-          <a className="px-5 py-2.5 rounded-xl border bg-white hover:bg-slate-50 text-slate-700" href="/">Cancel</a>
+          <a className="px-6 py-3 rounded-xl border bg-white hover:bg-slate-50 text-slate-700" href="/">Cancel</a>
         </div>
       </main>
     </div>
