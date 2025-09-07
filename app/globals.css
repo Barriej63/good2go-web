@@ -1,3 +1,8 @@
+/* Enable Tailwind layers */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* --- Good2Go base theme --- */
 :root{
   --g2g-green:#16a34a;
