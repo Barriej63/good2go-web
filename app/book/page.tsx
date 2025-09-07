@@ -1,6 +1,7 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
 
+/** Compact types kept as-is */
 type SlotDef = {
   weekday: number;
   start: string;
@@ -8,7 +9,6 @@ type SlotDef = {
   venueAddress?: string | null;
   note?: string | null;
 };
-
 type SlotsResponse = {
   regions: string[];
   slots: Record<string, SlotDef[]>;
@@ -18,30 +18,49 @@ function pad2(n: number){ return String(n).padStart(2, '0'); }
 function fmtISO(d: Date){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
 function addDays(d: Date, n: number){ const x = new Date(d); x.setDate(x.getDate()+n); return x; }
 function startOfMonth(d: Date){ return new Date(d.getFullYear(), d.getMonth(), 1); }
-
 function buildMonthMatrix(base: Date){
   const first = startOfMonth(base);
   const firstCell = addDays(first, -((first.getDay()+7)%7));
   const matrix: Date[][] = [];
   let cur = new Date(firstCell);
-  for (let r=0;r<6;r++){
-    const row: Date[] = [];
-    for (let c=0;c<7;c++){ row.push(new Date(cur)); cur = addDays(cur,1); }
-    matrix.push(row);
-  }
+  for (let r=0;r<6;r++){ const row: Date[]=[]; for (let c=0;c<7;c++){ row.push(new Date(cur)); cur = addDays(cur,1);} matrix.push(row); }
   return matrix;
 }
-
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
+/** Reusable inline styles (framework-free) */
+const card: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #e5e7eb',
+  borderRadius: 16,
+  padding: 20,
+  boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+  marginBottom: 24
+};
+const rowGap: React.CSSProperties = { marginBottom: 16 };
+const rowGapLarge: React.CSSProperties = { marginBottom: 24 };
+const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWeight: 600, color: '#334155', marginBottom: 8 };
+const inputStyle: React.CSSProperties = {
+  width: '100%', border: '1px solid #cbd5e1', borderRadius: 12,
+  padding: '12px 14px', fontSize: 16, height: 46, outline: 'none'
+};
+const selectStyle = inputStyle;
+const pageWrap: React.CSSProperties = { background: '#f1f5f9' };
+const mainWrap: React.CSSProperties = { maxWidth: 1120, margin: '0 auto', padding: '48px 20px 120px' };
+
 export default function Page(){
+  // slots
   const [slotsData, setSlotsData] = useState<SlotsResponse>({ regions: [], slots: {} });
   const [region, setRegion] = useState<string>('');
   const [slotIdx, setSlotIdx] = useState<number>(0);
 
+  // package
   const [pkg, setPkg] = useState<'baseline'|'package4'>('baseline');
+
+  // selection
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
 
+  // identity / consent
   const [clientName, setClientName] = useState('');
   const [yourEmail, setYourEmail] = useState('');
   const [medName, setMedName] = useState('');
@@ -50,6 +69,7 @@ export default function Page(){
   const [consentName, setConsentName] = useState('');
   const [processing, setProcessing] = useState(false);
 
+  // load slots
   useEffect(()=>{
     (async()=>{
       try{
@@ -67,6 +87,7 @@ export default function Page(){
     return arr.length ? arr[Math.max(0, Math.min(slotIdx, arr.length-1))] : null;
   }, [slotsData, region, slotIdx]);
 
+  // calendar months
   const now = new Date();
   const monthA = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthB = new Date(now.getFullYear(), now.getMonth()+1, 1);
@@ -80,20 +101,14 @@ export default function Page(){
   function pick(d: Date){
     if (!isAllowed(d)) return;
     const iso = fmtISO(d);
-    if (pkg === 'baseline'){
-      setSelectedDates([iso]);
-    } else {
-      setSelectedDates([0,7,14,21].map(delta => fmtISO(addDays(d, delta))));
-    }
+    if (pkg === 'baseline') setSelectedDates([iso]);
+    else setSelectedDates([0,7,14,21].map(delta => fmtISO(addDays(d, delta))));
   }
 
   const canContinue = Boolean(
-    slot &&
-    selectedDates.length &&
-    consentOK &&
-    consentName.trim().length>1 &&
-    clientName.trim().length>1 &&
-    yourEmail.trim().length>3
+    slot && selectedDates.length &&
+    consentOK && consentName.trim().length>1 &&
+    clientName.trim().length>1 && yourEmail.trim().length>3
   );
 
   async function handleContinue(){
@@ -141,6 +156,7 @@ export default function Page(){
     }
   }
 
+  /** Calendar day cell */
   function Day({ d, activeMonth }: { d: Date, activeMonth: number }){
     const inMonth = d.getMonth() === activeMonth;
     const iso = fmtISO(d);
@@ -157,18 +173,12 @@ export default function Page(){
       userSelect: 'none',
       transition: 'all .15s ease',
       boxShadow: '0 0 0 0 rgba(2,132,199,0)',
+      background: '#ffffff'
     };
     let style: React.CSSProperties = { ...base };
-    if (!inMonth){
-      style.color = '#d1d5db';
-      style.borderColor = 'transparent';
-    } else if (allowed){
-      style.cursor = 'pointer';
-      style.background = '#ffffff';
-    } else {
-      style.color = '#9ca3af';
-      style.background = '#f8fafc';
-    }
+    if (!inMonth){ style.color = '#d1d5db'; style.borderColor = 'transparent'; }
+    else if (!allowed){ style.color = '#9ca3af'; style.background = '#f8fafc'; }
+    else { style.cursor = 'pointer'; }
     if (picked){
       style.background = '#0369a1';
       style.color = '#fff';
@@ -176,7 +186,6 @@ export default function Page(){
       style.fontWeight = 600;
       style.boxShadow = '0 0 0 2px rgba(2,132,199,.25) inset';
     }
-
     return <div style={style} onClick={()=> allowed && pick(d)} title={iso} aria-disabled={!allowed}>{d.getDate()}</div>;
   }
 
@@ -186,12 +195,12 @@ export default function Page(){
     const activeMonth = base.getMonth();
 
     return (
-      <div className="cal-month">
-        <div className="cal-title">{label}</div>
-        <div className="cal-dow">
-          {DOW.map(n => <div key={n} className="cal-dow-cell">{n}</div>)}
+      <div style={{ border: '1px solid #e5e7eb', borderRadius: 16, padding: 16, background: '#fff' }}>
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 10, color: '#0f172a' }}>{label}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 8, textAlign: 'center', color: '#64748b', fontSize: 12, marginBottom: 8 }}>
+          {DOW.map(n => <div key={n} style={{ padding: '4px 0' }}>{n}</div>)}
         </div>
-        <div className="cal-grid">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 8 }}>
           {mat.flat().map((d,i) => <Day key={i} d={d} activeMonth={activeMonth} />)}
         </div>
       </div>
@@ -199,111 +208,75 @@ export default function Page(){
   }
 
   return (
-    <div className="bg-slate-50">
-      <main className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 py-12 pb-28">
-        <style>{`
-          .cal-wrap {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-            gap: 22px;
-          }
-          .cal-month {
-            border: 1px solid #e5e7eb;
-            border-radius: 16px;
-            padding: 18px;
-            background: #f0f9ff;
-            box-shadow: 0 1px 2px rgba(0,0,0,.04);
-          }
-          .cal-title {
-            font-size: 1.125rem;
-            font-weight: 700;
-            margin-bottom: 10px;
-            color: #0f172a;
-          }
-          .cal-dow {
-            display: grid;
-            grid-template-columns: repeat(7, minmax(0, 1fr));
-            gap: 8px;
-            text-align: center;
-            color: #64748b;
-            font-size: 12px;
-            margin-bottom: 8px;
-          }
-          .cal-dow-cell { padding: 4px 0; }
-          .cal-grid {
-            display: grid !important;
-            grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
-            gap: 8px !important;
-          }
-        `}</style>
-
-        <header className="mb-8">
-          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">
-            Book a Good2Go Assessment
-          </h1>
-          <p className="text-slate-600 mt-3 text-lg">
+    <div style={pageWrap}>
+      <main style={mainWrap}>
+        {/* Heading */}
+        <div style={{ marginBottom: 24 }}>
+          <h1 style={{ fontSize: 36, fontWeight: 800, color: '#0f172a', margin: 0 }}>Book a Good2Go Assessment</h1>
+          <p style={{ color: '#475569', marginTop: 12, fontSize: 18 }}>
             Select product, region and time, then complete consent to proceed to payment.
           </p>
-        </header>
+        </div>
 
         {/* Package options */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-8">
-          <div className="flex flex-wrap items-center gap-x-10 gap-y-4">
-            <label className="inline-flex items-center gap-2">
-              <input type="radio" name="pkg" checked={pkg==='baseline'} onChange={()=>setPkg('baseline')} className="accent-sky-600" />
-              <span className="font-medium text-slate-800">
-                Baseline — <span className="text-slate-900">$65</span>
-              </span>
+        <section style={card}>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <input type="radio" name="pkg" checked={pkg==='baseline'} onChange={()=>setPkg('baseline')} />
+              <span style={{ fontWeight: 600, color: '#0f172a' }}>Baseline — <span>$65</span></span>
             </label>
-            <label className="inline-flex items-center gap-2">
-              <input type="radio" name="pkg" checked={pkg==='package4'} onChange={()=>setPkg('package4')} className="accent-sky-600" />
-              <span className="font-medium text-slate-800">
-                Package (4 weekly sessions) — <span className="text-slate-900">$199</span>
-              </span>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <input type="radio" name="pkg" checked={pkg==='package4'} onChange={()=>setPkg('package4')} />
+              <span style={{ fontWeight: 600, color: '#0f172a' }}>Package (4 weekly sessions) — <span>$199</span></span>
             </label>
           </div>
         </section>
 
         {/* Region + Time */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-8">
-          <div className="space-y-8">
-            <div>
-              <label className="block text-sm font-medium mb-3 text-slate-700">Region</label>
-              <select
-                className="w-full border rounded-xl px-3 py-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
-                value={region}
-                onChange={(e)=>{ setRegion(e.target.value); setSlotIdx(0); setSelectedDates([]); }}>
-                {(slotsData.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-3 text-slate-700">Time</label>
-              <select
-                className="w-full border rounded-xl px-3 py-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
-                value={String(slotIdx)}
-                onChange={(e)=>{ setSlotIdx(Number(e.target.value)); setSelectedDates([]); }}
-                disabled={!(slotsData.slots[region] || []).length}>
-                {(slotsData.slots[region] || []).map((s, i) => (
-                  // ▼ Only show the start time
-                  <option key={i} value={i}>{s.start}</option>
-                ))}
-              </select>
-            </div>
-
-            {slot?.venueAddress && (
-              <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-slate-700 text-sm">
-                <span className="font-medium">Venue:</span> {slot.venueAddress}
-                {slot.note ? <span className="text-slate-600"> — {slot.note}</span> : null}
-              </div>
-            )}
+        <section style={card}>
+          <div style={rowGapLarge}>
+            <label style={labelStyle}>Region</label>
+            <select
+              style={selectStyle}
+              value={region}
+              onChange={(e)=>{ setRegion(e.target.value); setSlotIdx(0); setSelectedDates([]); }}>
+              {(slotsData.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
           </div>
+
+          <div style={rowGapLarge}>
+            <label style={labelStyle}>Time</label>
+            <select
+              style={selectStyle}
+              value={String(slotIdx)}
+              onChange={(e)=>{ setSlotIdx(Number(e.target.value)); setSelectedDates([]); }}
+              disabled={!(slotsData.slots[region] || []).length}>
+              {(slotsData.slots[region] || []).map((s, i) => (
+                /* Only show start time */
+                <option key={i} value={i}>{s.start}</option>
+              ))}
+            </select>
+          </div>
+
+          {slot?.venueAddress && (
+            <div style={{
+              ...rowGap,
+              padding: '10px 14px',
+              borderRadius: 12,
+              border: '1px solid #e2e8f0',
+              background: '#f8fafc',
+              color: '#334155',
+              fontSize: 14
+            }}>
+              <strong>Venue:</strong> {slot.venueAddress}{slot.note ? <> — {slot.note}</> : null}
+            </div>
+          )}
         </section>
 
         {/* Calendar */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-10">
-          <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-4">
-            <div className="cal-wrap">
+        <section style={card}>
+          <div style={{ borderRadius: 14, background: '#eff6ff', border: '1px solid #bae6fd', padding: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(340px,1fr))', gap: 22 }}>
               <Month base={monthA} />
               <Month base={monthB} />
             </div>
@@ -311,74 +284,98 @@ export default function Page(){
         </section>
 
         {/* Identity fields */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-10">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div>
-              <label className="block text-sm font-medium mb-3 text-slate-700">Client Name</label>
-              <input className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={clientName} onChange={e=>setClientName(e.target.value)} />
+        <section style={card}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(260px,1fr))', gap: 20 }}>
+            <div style={rowGapLarge}>
+              <label style={labelStyle}>Client Name</label>
+              <input style={inputStyle} value={clientName} onChange={e=>setClientName(e.target.value)} />
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-3 text-slate-700">Your Email</label>
-              <input type="email" className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
+            <div style={rowGapLarge}>
+              <label style={labelStyle}>Your Email</label>
+              <input type="email" style={inputStyle} value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-3 text-slate-700">Medical Professional Name (optional)</label>
-              <input className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medName} onChange={e=>setMedName(e.target.value)} />
+            <div style={rowGapLarge}>
+              <label style={labelStyle}>Medical Professional Name (optional)</label>
+              <input style={inputStyle} value={medName} onChange={e=>setMedName(e.target.value)} />
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-3 text-slate-700">Medical Professional Email (optional)</label>
-              <input type="email" className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
+            <div style={rowGapLarge}>
+              <label style={labelStyle}>Medical Professional Email (optional)</label>
+              <input type="email" style={inputStyle} value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
             </div>
           </div>
 
           {/* Consent */}
-          <section className="mt-10 p-6 border rounded-2xl bg-slate-50 space-y-6">
-            <h3 className="text-lg font-semibold text-slate-900">Consent &amp; Disclosure</h3>
-            <ul className="list-disc pl-5 text-[15px] text-slate-700 space-y-4">
-              <li>I consent to Good2Go sharing relevant assessment results with my nominated referring medical professional for the purpose of ongoing care.</li>
-              <li>I understand I can revoke consent at any time in writing, except where action has already been taken based on this consent.</li>
-              <li>I acknowledge Good2Go is a clinical decision support (CDS) tool, not a diagnostic instrument.</li>
+          <section style={{ marginTop: 28, padding: 20, border: '1px solid #e2e8f0', borderRadius: 16, background: '#f8fafc' }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 12px' }}>Consent &amp; Disclosure</h3>
+            <ul style={{ margin: 0, paddingLeft: 20, color: '#334155', lineHeight: 1.6 }}>
+              <li style={rowGap}>I consent to Good2Go sharing relevant assessment results with my nominated referring medical professional for the purpose of ongoing care.</li>
+              <li style={rowGap}>I understand I can revoke consent at any time in writing, except where action has already been taken based on this consent.</li>
+              <li style={rowGap}>I acknowledge Good2Go is a clinical decision support (CDS) tool, not a diagnostic instrument.</li>
             </ul>
 
-            {/* Highlighted consent link */}
-            <div className="flex items-center gap-4">
+            {/* Highlighted link + version */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16, marginBottom: 12 }}>
               <a
                 href="/consent"
-                className="inline-flex items-center px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700"
+                style={{
+                  display: 'inline-flex', alignItems: 'center',
+                  padding: '10px 14px', background: '#0284c7', color: '#fff',
+                  borderRadius: 10, fontSize: 14, fontWeight: 600, textDecoration: 'none'
+                }}
               >
                 View full Consent Agreement
               </a>
-              <span className="text-sm text-slate-600">Version: 2025-08-24</span>
+              <span style={{ color: '#475569', fontSize: 14 }}>Version: 2025-08-24</span>
             </div>
 
-            <div className="space-y-5 pt-2">
-              <label className="flex items-start gap-3">
-                <input type="checkbox" className="mt-1 h-4 w-4 accent-sky-600" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} />
-                <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
+            <div style={{ marginTop: 10 }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 16 }}>
+                <input type="checkbox" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} style={{ marginTop: 4, width: 18, height: 18 }} />
+                <span style={{ fontSize: 14, color: '#334155' }}>
+                  I have read and agree to the Consent and Disclaimer Agreement.
+                </span>
               </label>
 
-              <div className="max-w-sm">
-                <label className="block text-sm font-medium mb-2">Full Name (type to sign)</label>
-                <input className="w-full rounded-xl border px-3 py-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-sky-300" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
+              <div style={{ maxWidth: 420 }}>
+                <label style={labelStyle}>Full Name (type to sign)</label>
+                <input
+                  style={inputStyle}
+                  value={consentName}
+                  onChange={(e)=>setConsentName(e.target.value)}
+                  placeholder="Your full legal name"
+                />
               </div>
             </div>
           </section>
         </section>
 
         {/* Actions */}
-        <div className="mt-12 flex flex-wrap items-center gap-8">
+        <div style={{ marginTop: 28, display: 'flex', gap: 16, alignItems: 'center' }}>
           <button
             onClick={handleContinue}
             disabled={!canContinue || processing}
-            className={[
-              'px-7 py-3 text-lg rounded-xl text-white shadow-sm transition',
-              canContinue ? 'bg-sky-600 hover:bg-sky-700' : 'bg-slate-400 cursor-not-allowed'
-            ].join(' ')}
+            style={{
+              padding: '12px 20px',
+              borderRadius: 12,
+              fontSize: 16,
+              color: '#fff',
+              background: canContinue ? '#0284c7' : '#94a3b8',
+              cursor: canContinue ? 'pointer' : 'not-allowed',
+              border: 0,
+              boxShadow: '0 1px 2px rgba(0,0,0,.06)'
+            }}
           >
             {processing? 'Processing…':'Continue to Payment'}
           </button>
 
-          <a className="px-6 py-3 rounded-xl border bg-white hover:bg-slate-50 text-slate-700" href="/">
+          <a href="/" style={{
+            padding: '12px 20px',
+            borderRadius: 12,
+            border: '1px solid #cbd5e1',
+            background: '#ffffff',
+            color: '#334155',
+            textDecoration: 'none'
+          }}>
             Cancel
           </a>
         </div>
