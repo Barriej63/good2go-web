@@ -30,37 +30,40 @@ export default function ConfigPage() {
   }
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold mb-4">Configuration</h1>
-      {loading ? <p>Loading…</p> : (
-        <div className="space-y-6">
-          <div>
-            <h2 className="font-medium mb-2">Regions</h2>
-            <textarea
-              className="w-full border rounded p-2"
-              rows={4}
-              value={(cfg.regions || []).join('\n')}
-              onChange={e => setCfg(s => ({ ...s, regions: e.target.value.split('\n').map(v => v.trim()).filter(Boolean) }))}
-            />
-            <p className="text-sm text-gray-500 mt-1">One region per line.</p>
-          </div>
+    <div className="space-y-6">
+      <h1 className="text-xl font-semibold">Configuration</h1>
 
-          <div>
-            <h2 className="font-medium mb-2">Timeslots</h2>
-            <textarea
-              className="w-full border rounded p-2"
-              rows={6}
-              value={(cfg.timeslots || []).join('\n')}
-              onChange={e => setCfg(s => ({ ...s, timeslots: e.target.value.split('\n').map(v => v.trim()).filter(Boolean) }))}
-            />
-            <p className="text-sm text-gray-500 mt-1">One timeslot per line.</p>
-          </div>
+      <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
+        <h2 className="font-medium mb-2">Regions</h2>
+        <textarea
+          className="w-full border rounded-lg p-2 leading-6 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          rows={4}
+          value={(cfg.regions || []).join('\n')}
+          onChange={e => setCfg(s => ({ ...s, regions: e.target.value.split('\n').map(v => v.trim()).filter(Boolean) }))}
+        />
+        <p className="text-xs text-slate-500 mt-2">One region per line.</p>
+      </section>
 
-          <button onClick={save} disabled={saving} className="rounded bg-blue-600 hover:bg-blue-700 text-white px-4 py-2">
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      )}
+      <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
+        <h2 className="font-medium mb-2">Timeslots</h2>
+        <textarea
+          className="w-full border rounded-lg p-2 leading-6 focus:outline-none focus:ring-2 focus:ring-sky-300"
+          rows={6}
+          value={(cfg.timeslots || []).join('\n')}
+          onChange={e => setCfg(s => ({ ...s, timeslots: e.target.value.split('\n').map(v => v.trim()).filter(Boolean) }))}
+        />
+        <p className="text-xs text-slate-500 mt-2">One timeslot per line.</p>
+      </section>
+
+      <div>
+        <button
+          onClick={save}
+          disabled={saving}
+          className="rounded-lg bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 shadow-sm disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
     </div>
   );
 }
