@@ -5,7 +5,10 @@ import { usePathname } from 'next/navigation';
 
 export default function SiteHeader() {
   const pathname = usePathname() || '/';
-  if (pathname.startsWith('/admin')) return null; // don’t show on admin
+  if (pathname.startsWith('/admin')) return null; // admin has its own chrome
+
+  const onBook = pathname === '/book';
+  const onAdminLogin = pathname === '/admin/login';
 
   return (
     <header className="border-b bg-gradient-to-r from-sky-600 to-sky-500 text-white">
@@ -15,18 +18,12 @@ export default function SiteHeader() {
           <span className="hidden md:inline text-white/80">Recover Smart. Return Strong.</span>
         </div>
         <nav className="flex items-center gap-3">
-          <Link
-            href="/book"
-            className="btn btn-primary shadow-sm"
-          >
-            Book a Test
-          </Link>
-          <Link
-            href="/admin/login"
-            className="btn btn-ghost"
-          >
-            Clinician/Admin Login
-          </Link>
+          {!onBook && (
+            <Link href="/book" className="btn btn-primary shadow-sm">Book a Test</Link>
+          )}
+          {!onAdminLogin && (
+            <Link href="/admin/login" className="btn btn-ghost">Clinician/Admin Login</Link>
+          )}
         </nav>
       </div>
     </header>

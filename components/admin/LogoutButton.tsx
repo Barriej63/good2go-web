@@ -1,4 +1,3 @@
-// components/admin/LogoutButton.tsx
 'use client';
 
 export default function LogoutButton() {
@@ -7,10 +6,7 @@ export default function LogoutButton() {
     window.location.href = '/admin/login';
   }
   return (
-    <button
-      onClick={doLogout}
-      className="btn btn-ghost border-white/40 text-white hover:bg-white/10"
-    >
+    <button onClick={doLogout} className="btn btn-ghost border-white/40 text-white hover:bg-white/10">
       Logout
     </button>
   );

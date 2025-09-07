@@ -1,4 +1,3 @@
-// components/admin/Sidebar.tsx
 'use client';
 
 import Link from 'next/link';
@@ -19,7 +18,6 @@ export default function Sidebar() {
       <div className="h-14 flex items-center px-4 border-b border-slate-800">
         <span className="font-semibold tracking-tight">Good2Go Admin</span>
       </div>
-
       <nav className="p-2 space-y-1">
         {NAV.map((item) => {
           const active = pathname === item.href;
@@ -37,7 +35,6 @@ export default function Sidebar() {
           );
         })}
       </nav>
-
       <div className="mt-auto p-3 text-[11px] text-slate-400 hidden md:block">
         © {new Date().getFullYear()} Good2Go
       </div>
