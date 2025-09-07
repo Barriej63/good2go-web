@@ -19,36 +19,46 @@ export default function BookingsPage() {
   }, []);
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold mb-4">Bookings</h1>
-      {loading ? <p>Loading…</p> : (
+    <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Bookings</h1>
+        <span className="text-xs text-slate-500">{items.length} total</span>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-slate-600">Loading…</div>
+      ) : items.length ? (
         <div className="overflow-x-auto">
-          <table className="min-w-[720px] w-full border">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-2 text-left">When</th>
-                <th className="px-3 py-2 text-left">Name</th>
-                <th className="px-3 py-2 text-left">Email</th>
-                <th className="px-3 py-2 text-left">Region</th>
-                <th className="px-3 py-2 text-left">Slot</th>
+          <table className="min-w-[720px] w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-slate-700">
+                <th className="px-3 py-2 text-left font-medium">When</th>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-left font-medium">Email</th>
+                <th className="px-3 py-2 text-left font-medium">Region</th>
+                <th className="px-3 py-2 text-left font-medium">Slot</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-100">
               {items.map(b => (
-                <tr key={b.id} className="border-t">
+                <tr key={b.id} className="hover:bg-slate-50">
                   <td className="px-3 py-2">{b.createdAt || ''}</td>
                   <td className="px-3 py-2">{b.name || ''}</td>
                   <td className="px-3 py-2">{b.email || ''}</td>
-                  <td className="px-3 py-2">{b.region || ''}</td>
+                  <td className="px-3 py-2">
+                    <span className="inline-flex items-center rounded-full bg-sky-50 text-sky-700 px-2 py-0.5 text-xs">
+                      {b.region || ''}
+                    </span>
+                  </td>
                   <td className="px-3 py-2">{b.slot || ''}</td>
                 </tr>
               ))}
-              {!items.length && <tr><td className="px-3 py-4" colSpan={5}>No bookings yet.</td></tr>}
             </tbody>
           </table>
         </div>
+      ) : (
+        <div className="text-sm text-slate-600">No bookings yet.</div>
       )}
-    </div>
+    </section>
   );
 }
-
