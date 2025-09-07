@@ -1,19 +1,18 @@
+// app/layout.jsx
 import './globals.css';
 import SiteHeader from '@/components/SiteHeader';
-import SiteFooter from '@/components/SiteFooter';
 
 export const metadata = {
   title: 'Good2Go',
-  description: 'Concussion assessment and monitoring.',
+  description: 'Recover Smart. Return Strong.',
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className="min-h-screen flex flex-col bg-gray-50">
+      <body className="bg-slate-50 text-slate-900">
         <SiteHeader />
-        <main className="flex-1">{children}</main>
-        <SiteFooter />
+        {children}
       </body>
     </html>
   );
