@@ -8,7 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
  * - Only allowed weekday is clickable
  * - Baseline ($65) = 1 date; Package ($199) = 4 weekly dates auto-selected
  * - Keeps Region/Time selects, consent short form, identity fields, redirect flow
- *
+ * - Build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025-08-24
  */
 
 type SlotDef = {
@@ -250,10 +250,6 @@ export default function Page(){
             gap: 6px !important;
           }
         `}</style>
-
-        <div className="text-xs text-slate-500 mb-3">
-          build: app/book/page.tsx • calendar-2mo-inlinegrid-FIXED • 2025-08-24
-        </div>
 
         <header className="mb-6">
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight">Book a Good2Go Assessment</h1>
