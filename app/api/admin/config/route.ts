@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isAdminCookie, getAdminRole } from '@/lib/adminAuth';
+import { isAdminCookie, getAdminRole, requireSuperadmin } from '@/lib/adminAuth';
 import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
 
 export async function GET() {
@@ -19,7 +19,9 @@ export async function POST(req: Request) {
   if (!ok) return NextResponse.json({ ok:false, error:'unauthorized' }, { status: 401 });
 
   const role = await getAdminRole();
-  if (role !== 'superadmin') return NextResponse.json({ ok:false, error:'forbidden' }, { status: 403 });
+  if (!requireSuperadmin(role)) {
+    return NextResponse.json({ ok:false, error:'forbidden' }, { status: 403 });
+  }
 
   const db = getFirestoreSafe();
   if (!db) return NextResponse.json({ ok:false, error:'firestore_init_failed' }, { status: 500 });
