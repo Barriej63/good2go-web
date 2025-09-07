@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 type SlotDef = {
-  weekday: number; // 0..6 (Sun..Sat)
+  weekday: number;
   start: string;
   end: string;
   venueAddress?: string | null;
@@ -21,7 +21,7 @@ function startOfMonth(d: Date){ return new Date(d.getFullYear(), d.getMonth(), 1
 
 function buildMonthMatrix(base: Date){
   const first = startOfMonth(base);
-  const firstCell = addDays(first, -((first.getDay()+7)%7)); // back to Sunday
+  const firstCell = addDays(first, -((first.getDay()+7)%7));
   const matrix: Date[][] = [];
   let cur = new Date(firstCell);
   for (let r=0;r<6;r++){
@@ -170,7 +170,7 @@ export default function Page(){
       style.background = '#f8fafc';
     }
     if (picked){
-      style.background = '#0369a1'; // sky-700
+      style.background = '#0369a1';
       style.color = '#fff';
       style.borderColor = '#0369a1';
       style.fontWeight = 600;
@@ -200,7 +200,7 @@ export default function Page(){
 
   return (
     <div className="bg-slate-50">
-      <main className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 py-12 pb-24">
+      <main className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 py-12 pb-28">
         <style>{`
           .cal-wrap {
             display: grid;
@@ -211,7 +211,7 @@ export default function Page(){
             border: 1px solid #e5e7eb;
             border-radius: 16px;
             padding: 18px;
-            background: #f0f9ff; /* sky-50 tint */
+            background: #f0f9ff;
             box-shadow: 0 1px 2px rgba(0,0,0,.04);
           }
           .cal-title {
@@ -238,15 +238,17 @@ export default function Page(){
         `}</style>
 
         <header className="mb-8">
-          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Book a Good2Go Assessment</h1>
+          <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">
+            Book a Good2Go Assessment
+          </h1>
           <p className="text-slate-600 mt-3 text-lg">
             Select product, region and time, then complete consent to proceed to payment.
           </p>
         </header>
 
         {/* Package options */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-6">
-          <div className="flex flex-wrap items-center gap-x-10 gap-y-3">
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-8">
+          <div className="flex flex-wrap items-center gap-x-10 gap-y-4">
             <label className="inline-flex items-center gap-2">
               <input type="radio" name="pkg" checked={pkg==='baseline'} onChange={()=>setPkg('baseline')} className="accent-sky-600" />
               <span className="font-medium text-slate-800">
@@ -262,32 +264,35 @@ export default function Page(){
           </div>
         </section>
 
-        {/* Region & Time (with larger vertical gaps) */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-6">
-          <div className="space-y-6">
+        {/* Region + Time */}
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-8">
+          <div className="space-y-8">
             <div>
               <label className="block text-sm font-medium mb-3 text-slate-700">Region</label>
               <select
-                className="w-full border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
+                className="w-full border rounded-xl px-3 py-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
                 value={region}
                 onChange={(e)=>{ setRegion(e.target.value); setSlotIdx(0); setSelectedDates([]); }}>
                 {(slotsData.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
+
             <div>
               <label className="block text-sm font-medium mb-3 text-slate-700">Time</label>
               <select
-                className="w-full border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
+                className="w-full border rounded-xl px-3 py-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-sky-300 bg-white"
                 value={String(slotIdx)}
                 onChange={(e)=>{ setSlotIdx(Number(e.target.value)); setSelectedDates([]); }}
                 disabled={!(slotsData.slots[region] || []).length}>
                 {(slotsData.slots[region] || []).map((s, i) => (
-                  <option key={i} value={i}>{s.start}–{s.end}</option>
+                  // ▼ Only show the start time
+                  <option key={i} value={i}>{s.start}</option>
                 ))}
               </select>
             </div>
+
             {slot?.venueAddress && (
-              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-slate-700 text-sm">
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-slate-700 text-sm">
                 <span className="font-medium">Venue:</span> {slot.venueAddress}
                 {slot.note ? <span className="text-slate-600"> — {slot.note}</span> : null}
               </div>
@@ -296,7 +301,7 @@ export default function Page(){
         </section>
 
         {/* Calendar */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-8">
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-10">
           <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-4">
             <div className="cal-wrap">
               <Month base={monthA} />
@@ -305,50 +310,63 @@ export default function Page(){
           </div>
         </section>
 
-        {/* Identity + Consent (with bigger line gaps) */}
-        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Identity fields */}
+        <section className="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mb-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div>
               <label className="block text-sm font-medium mb-3 text-slate-700">Client Name</label>
-              <input className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={clientName} onChange={e=>setClientName(e.target.value)} />
+              <input className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={clientName} onChange={e=>setClientName(e.target.value)} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-3 text-slate-700">Your Email</label>
-              <input type="email" className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
+              <input type="email" className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={yourEmail} onChange={e=>setYourEmail(e.target.value)} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-3 text-slate-700">Medical Professional Name (optional)</label>
-              <input className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medName} onChange={e=>setMedName(e.target.value)} />
+              <input className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medName} onChange={e=>setMedName(e.target.value)} />
             </div>
             <div>
               <label className="block text-sm font-medium mb-3 text-slate-700">Medical Professional Email (optional)</label>
-              <input type="email" className="border rounded-xl px-3 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
+              <input type="email" className="border rounded-xl px-3 py-3 text-[16px] w-full focus:outline-none focus:ring-2 focus:ring-sky-300" value={medEmail} onChange={e=>setMedEmail(e.target.value)} />
             </div>
           </div>
 
-          <section className="mt-10 p-6 border rounded-2xl bg-slate-50 space-y-4">
+          {/* Consent */}
+          <section className="mt-10 p-6 border rounded-2xl bg-slate-50 space-y-6">
             <h3 className="text-lg font-semibold text-slate-900">Consent &amp; Disclosure</h3>
-            <ul className="list-disc pl-5 text-[15px] text-slate-700 space-y-3">
+            <ul className="list-disc pl-5 text-[15px] text-slate-700 space-y-4">
               <li>I consent to Good2Go sharing relevant assessment results with my nominated referring medical professional for the purpose of ongoing care.</li>
               <li>I understand I can revoke consent at any time in writing, except where action has already been taken based on this consent.</li>
               <li>I acknowledge Good2Go is a clinical decision support (CDS) tool, not a diagnostic instrument.</li>
             </ul>
-            <p className="text-sm text-slate-600">Read the full agreement at <a href="/consent" className="underline">/consent</a>. Version: 2025-08-24</p>
 
-            <label className="flex items-start gap-3 pt-2">
-              <input type="checkbox" className="mt-1 h-4 w-4 accent-sky-600" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} />
-              <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
-            </label>
+            {/* Highlighted consent link */}
+            <div className="flex items-center gap-4">
+              <a
+                href="/consent"
+                className="inline-flex items-center px-4 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700"
+              >
+                View full Consent Agreement
+              </a>
+              <span className="text-sm text-slate-600">Version: 2025-08-24</span>
+            </div>
 
-            <div className="pt-2 max-w-sm">
-              <label className="block text-sm font-medium mb-2">Full Name (type to sign)</label>
-              <input className="w-full rounded-xl border px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-sky-300" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
+            <div className="space-y-5 pt-2">
+              <label className="flex items-start gap-3">
+                <input type="checkbox" className="mt-1 h-4 w-4 accent-sky-600" checked={consentOK} onChange={(e)=>setConsentOK(e.target.checked)} />
+                <span className="text-sm">I have read and agree to the Consent and Disclaimer Agreement.</span>
+              </label>
+
+              <div className="max-w-sm">
+                <label className="block text-sm font-medium mb-2">Full Name (type to sign)</label>
+                <input className="w-full rounded-xl border px-3 py-3 text-[16px] focus:outline-none focus:ring-2 focus:ring-sky-300" value={consentName} onChange={(e)=>setConsentName(e.target.value)} placeholder="Your full legal name" />
+              </div>
             </div>
           </section>
         </section>
 
         {/* Actions */}
-        <div className="mt-10 flex flex-wrap items-center gap-6">
+        <div className="mt-12 flex flex-wrap items-center gap-8">
           <button
             onClick={handleContinue}
             disabled={!canContinue || processing}
