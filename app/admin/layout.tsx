@@ -1,16 +1,18 @@
+// app/admin/layout.tsx
 import Sidebar from '@/components/admin/Sidebar';
 import LogoutButton from '@/components/admin/LogoutButton';
 import { getAdminRole } from '@/lib/adminAuth';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const role = await getAdminRole();
+
   return (
-    <div className="min-h-[calc(100vh-56px)] flex"> {/* 56px = public header height */}
+    <div className="min-h-[calc(100vh-56px)] flex"> {/* 56px = public site header height */}
       <Sidebar />
       <div className="flex-1 flex flex-col">
-        <header className="h-14 bg-gradient-to-r from-sky-600 to-sky-500 text-white px-4 flex items-center justify-between">
+        <header className="h-14 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white px-4 flex items-center justify-between shadow-sm">
           <div className="text-sm">
-            Signed in as: <span className="font-medium capitalize">{role ?? 'unknown'}</span>
+            Signed in as: <span className="font-semibold capitalize">{role ?? 'unknown'}</span>
           </div>
           <LogoutButton />
         </header>
@@ -21,4 +23,3 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     </div>
   );
 }
-
