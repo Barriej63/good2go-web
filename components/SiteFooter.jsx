@@ -1,28 +1,25 @@
-import Link from 'next/link';
-import { SITE } from '@/content/siteContent';
+import Image from 'next/image';
 
 export default function SiteFooter() {
   return (
-    <footer className="border-t py-10 text-sm text-gray-600">
-      <div className="mx-auto max-w-6xl px-4 grid gap-6 md:grid-cols-3">
-        <div>
-          <div className="font-semibold mb-2">{SITE.name}</div>
-          <p>Concussion assessment & monitoring service.</p>
+    <footer className="site-footer border-t border-slate-200 mt-10 bg-white">
+      <div className="container flex items-center justify-between h-20">
+        <div className="flex items-center gap-2">
+          <Image
+            src="/good2go-logo1.png"
+            alt="Good2Go"
+            width={32}
+            height={32}
+          />
+          <span className="text-sm text-slate-500">
+            © {new Date().getFullYear()} Good2Go
+          </span>
         </div>
-        <div className="space-y-1">
-          <div className="font-semibold">Links</div>
-          <ul className="space-y-1">
-            <li><Link href="/consent">Consent</Link></li>
-            <li><Link href="/disclaimer">Disclaimer</Link></li>
-            <li><Link href="/privacy">Privacy</Link></li>
-          </ul>
-        </div>
-        <div className="space-y-1">
-          <div className="font-semibold">Support</div>
-          <p>Questions? <a className="underline" href={`mailto:${SITE.supportEmail}`}>{SITE.supportEmail}</a></p>
+        <div className="text-xs text-slate-400">
+          Built for concussion monitoring
         </div>
       </div>
-      <div className="mt-8 text-center text-xs">© {new Date().getFullYear()} {SITE.name}. All rights reserved.</div>
     </footer>
   );
 }
+
