@@ -34,7 +34,9 @@ export default function Sidebar() {
           );
         })}
       </nav>
-      <div className="mt-auto p-3 text-[11px] text-slate-400 hidden md:block">© {new Date().getFullYear()} Good2Go</div>
+      <div className="mt-auto p-3 text-[11px] text-slate-400 hidden md:block">
+        © {new Date().getFullYear()} Good2Go
+      </div>
     </aside>
   );
 }
