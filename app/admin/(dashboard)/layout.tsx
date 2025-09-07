@@ -1,23 +1,32 @@
-import Sidebar from '@/components/admin/Sidebar';
-import LogoutButton from '@/components/admin/LogoutButton';
-import { getAdminRole } from '@/lib/adminAuth';
+import Link from 'next/link';
 
-export default async function AdminDashboardLayout({ children }: { children: React.ReactNode }) {
-  const role = await getAdminRole();
+export default function AdminDashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-[calc(100vh-56px)] flex">
-      <Sidebar />
-      <div className="flex-1 flex flex-col">
-        <header className="h-14 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white px-4 flex items-center justify-between shadow-sm">
-          <div className="text-sm">
-            Signed in as: <span className="font-semibold capitalize">{role ?? 'unknown'}</span>
+    <div className="container">
+      <header className="site-header mb-6">
+        <div className="site-header-inner">
+          <div className="brand">
+            <span className="title">Good2Go Admin</span>
           </div>
-          <LogoutButton />
-        </header>
-        <main className="p-6 max-w-6xl mx-auto w-full">
-          {children}
-        </main>
-      </div>
+          <nav style={{ marginLeft: 'auto' }}>
+            <div className="btn-row">
+              <Link href="/admin" className="btn btn-ghost">Overview</Link>
+              <Link href="/admin/bookings" className="btn btn-ghost">Bookings</Link>
+              <Link href="/admin/config" className="btn btn-ghost">Config</Link>
+              <Link href="/admin/users" className="btn btn-ghost">Users</Link>
+            </div>
+          </nav>
+        </div>
+      </header>
+
+      <main className="pb-10">
+        {children}
+      </main>
+
+      <footer className="site-footer">
+        <div className="container site-footer-inner">© {new Date().getFullYear()} Good2Go</div>
+      </footer>
     </div>
   );
 }
+
