@@ -1,5 +1,18 @@
-import { redirect } from 'next/navigation';
-import { isAdminCookie, getAdminRole } from '@/lib/adminAuth';
+function useAdminGate() {
+  const [allowed, setAllowed] = React.useState<boolean | null>(null);
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/admin/me', { cache: 'no-store' });
+        const j = await r.json();
+        setAllowed(!!j.ok);
+      } catch {
+        setAllowed(false);
+      }
+    })();
+  }, []);
+  return allowed;
+}
 
 export const dynamic = 'force-dynamic';
 
