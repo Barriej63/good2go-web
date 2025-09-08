@@ -12,17 +12,18 @@ type SlotDef = {
 
 type Booking = {
   id: string;
-  createdAt?: string;
-  name?: string;
-  email?: string;
-  region?: string;
-  slot?: string | SlotDef;   // <-- can be string OR object
-  venue?: string;
-  packageType?: string;
+  createdAt?: unknown;
+  name?: unknown;
+  email?: unknown;
+  region?: unknown;
+  slot?: unknown;            // may be string or object
+  venue?: unknown;
+  packageType?: unknown;
 };
 
 type AdminConfig = { regions?: string[] };
 
+// ---------- UI constants/styles ----------
 const pageWrap: React.CSSProperties = { background: '#f1f5f9', minHeight: '100%' };
 const mainWrap: React.CSSProperties = { maxWidth: 1120, margin: '0 auto', padding: '32px 20px 80px' };
 const card: React.CSSProperties = {
@@ -36,7 +37,48 @@ const card: React.CSSProperties = {
 const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWeight: 600, color: '#334155', marginBottom: 8 };
 const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid #cbd5e1', borderRadius: 12, padding: '10px 12px', height: 42, fontSize: 14 };
 
-/** Soft gate: ping /api/admin/me; if not ok, send to /admin/login */
+// ---------- helpers ----------
+const WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function safeText(v: unknown, fallback = '-'): string {
+  if (v == null) return fallback;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  // stringify objects/arrays, truncated to avoid huge blobs
+  try {
+    const s = JSON.stringify(v);
+    return s.length > 200 ? s.slice(0, 197) + '…' : s;
+  } catch {
+    return fallback;
+  }
+}
+
+function isSlotDef(v: unknown): v is SlotDef {
+  return isPlainObject(v) && typeof v.weekday === 'number' && typeof v.start === 'string' && typeof v.end === 'string';
+}
+
+function formatSlot(slot: unknown): string {
+  if (typeof slot === 'string') return slot;
+  if (isSlotDef(slot)) {
+    const w = WEEK[slot.weekday] ?? '';
+    const range = [slot.start, slot.end].filter(Boolean).join('–');
+    const addr = slot.venueAddress ? ` · ${slot.venueAddress}` : '';
+    const core = [w, range].filter(Boolean).join(' ');
+    return core ? `${core}${addr}` : JSON.stringify(slot);
+  }
+  return safeText(slot);
+}
+
+function slotDateForFilter(slot: unknown): string {
+  // only string slots in “YYYY-MM-DD …” format provide a date
+  return typeof slot === 'string' ? slot.slice(0, 10) : '';
+}
+
+/** Small client gate: calls /api/admin/me; redirects if not allowed. */
 function useGate() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   useEffect(() => {
@@ -56,32 +98,26 @@ function useGate() {
   return allowed;
 }
 
-const WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-
-/** Format a slot that may be a string or a SlotDef object */
-function formatSlot(slot: Booking['slot']): string {
-  if (!slot) return '-';
-  if (typeof slot === 'string') return slot;
-
-  const w = typeof slot.weekday === 'number' && WEEK[slot.weekday] ? WEEK[slot.weekday] : '';
-  const range = [slot.start, slot.end].filter(Boolean).join('–');
-  const addr = slot.venueAddress ? ` · ${slot.venueAddress}` : '';
-  // If we have at least a time range or weekday, show that; else JSON fallback
-  const core = [w, range].filter(Boolean).join(' ');
-  return core ? `${core}${addr}` : JSON.stringify(slot);
-}
-
-/** Extract YYYY-MM-DD for filtering, if slot is a string in that format */
-function slotDateForFilter(slot: Booking['slot']): string {
-  if (typeof slot === 'string') return slot.slice(0, 10); // e.g. "2025-03-01 17:30–18:30"
-  return ''; // object slots don’t carry a full date; fall back to createdAt
-}
+// View-model used by the table (strings only)
+type UiBooking = {
+  id: string;
+  createdAtText: string;
+  nameText: string;
+  emailText: string;
+  regionText: string;
+  slotText: string;
+  venueText: string;
+  packageText: string;
+  // for filtering
+  createdDate: string;
+  slotDate: string;
+};
 
 export default function BookingsPage() {
   const allowed = useGate();
 
   const [regions, setRegions] = useState<string[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [rows, setRows] = useState<UiBooking[]>([]);
   const [regionFilter, setRegionFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState<string>(''); // YYYY-MM-DD
   const [showCount, setShowCount] = useState(20);
@@ -91,32 +127,54 @@ export default function BookingsPage() {
       try {
         const [cfgRes, bRes] = await Promise.all([
           fetch('/api/admin/config', { cache: 'no-store' }),
-          fetch('/api/admin/bookings?limit=200', { cache: 'no-store' }),
+          fetch('/api/admin/bookings?limit=500', { cache: 'no-store' }), // newest-first per your API
         ]);
-        const cfg: AdminConfig = (await cfgRes.json()) || {};
-        const bJson = await bRes.json();
-        setRegions(Array.isArray(cfg.regions) ? cfg.regions : []);
-        setBookings(Array.isArray(bJson?.items) ? bJson.items : []);
+        const cfg: AdminConfig = await cfgRes.json().catch(() => ({}));
+        setRegions(Array.isArray(cfg?.regions) ? cfg.regions : []);
+
+        const j = await bRes.json().catch(() => ({}));
+        const items: Booking[] = Array.isArray(j?.items) ? j.items : [];
+
+        // Normalize everything to safe strings (and keep dates to filter)
+        const vm: UiBooking[] = items.map((b): UiBooking => {
+          const createdAtStr = safeText(b.createdAt);
+          const createdDate = createdAtStr ? createdAtStr.slice(0, 10) : '';
+          const slotText = formatSlot(b.slot);
+          const venueFromSlot =
+            isSlotDef(b.slot) && b.slot.venueAddress ? String(b.slot.venueAddress) : undefined;
+
+          return {
+            id: safeText(b.id, Math.random().toString(36).slice(2)),
+            createdAtText: createdAtStr || '-',
+            nameText: safeText(b.name),
+            emailText: safeText(b.email),
+            regionText: safeText(b.region),
+            slotText,
+            venueText: safeText(b.venue ?? venueFromSlot),
+            packageText: safeText(b.packageType),
+            createdDate,
+            slotDate: slotDateForFilter(b.slot),
+          };
+        });
+
+        setRows(vm);
       } catch (e) {
-        console.error('load admin data failed', e);
+        console.error('load admin bookings failed', e);
       }
     })();
   }, []);
 
   const filtered = useMemo(() => {
-    let list = bookings;
+    let list = rows;
     if (regionFilter !== 'all') {
-      list = list.filter(b => (b.region || '').toLowerCase() === regionFilter.toLowerCase());
+      const key = regionFilter.toLowerCase();
+      list = list.filter(b => b.regionText.toLowerCase() === key);
     }
     if (dateFilter) {
-      list = list.filter(b => {
-        const slotDate = slotDateForFilter(b.slot);
-        const createdDate = (b.createdAt || '').slice(0, 10);
-        return slotDate === dateFilter || createdDate === dateFilter;
-      });
+      list = list.filter(b => b.slotDate === dateFilter || b.createdDate === dateFilter);
     }
     return list;
-  }, [bookings, regionFilter, dateFilter]);
+  }, [rows, regionFilter, dateFilter]);
 
   const visible = filtered.slice(0, showCount);
 
@@ -174,27 +232,19 @@ export default function BookingsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visible.map((b) => {
-                  const slotText = formatSlot(b.slot);
-                  const venueText =
-                    typeof b.venue === 'string' ? b.venue :
-                    (typeof b.slot === 'object' && b.slot?.venueAddress) ? String(b.slot.venueAddress) :
-                    '-';
-
-                  return (
-                    <tr key={b.id}>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>
-                        {b.createdAt || '-'}
-                      </td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.name || '-'}</td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.email || '-'}</td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.region || '-'}</td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{slotText}</td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{venueText}</td>
-                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.packageType || '-'}</td>
-                    </tr>
-                  );
-                })}
+                {visible.map((b) => (
+                  <tr key={b.id}>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>
+                      {b.createdAtText}
+                    </td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.nameText}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.emailText}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.regionText}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.slotText}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.venueText}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.packageText}</td>
+                  </tr>
+                ))}
                 {!visible.length && (
                   <tr>
                     <td colSpan={7} style={{ padding: '14px 12px', color: '#64748b' }}>
