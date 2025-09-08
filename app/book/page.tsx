@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
+import VenueFromConfig from './ui/VenueFromConfig';
 
 /** Compact types kept as-is */
 type SlotDef = {
@@ -258,17 +259,26 @@ export default function Page(){
             </select>
           </div>
 
-          {slot?.venueAddress && (
-            <div style={{
-              ...rowGap,
-              padding: '10px 14px',
-              borderRadius: 12,
-              border: '1px solid #e2e8f0',
-              background: '#f8fafc',
-              color: '#334155',
-              fontSize: 14
-            }}>
-              <strong>Venue:</strong> {slot.venueAddress}{slot.note ? <> — {slot.note}</> : null}
+          {/* VENUE (config-aware) */}
+          {slot && (
+            <div
+              style={{
+                ...rowGap,
+                padding: '10px 14px',
+                borderRadius: 12,
+                border: '1px solid #e2e8f0',
+                background: '#f8fafc',
+                color: '#334155',
+                fontSize: 14
+              }}
+            >
+              <strong>Venue:</strong>{' '}
+              <VenueFromConfig
+                region={region}
+                time={slot.start}
+                fallback={slot.venueAddress || ''}
+              />
+              {slot.note ? <> — {slot.note}</> : null}
             </div>
           )}
         </section>
