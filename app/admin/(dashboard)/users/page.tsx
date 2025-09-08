@@ -2,20 +2,15 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
-/** Small client gate */
 function useAdminGate() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
-  const [role, setRole] = useState<'superadmin' | 'coach' | 'viewer' | null>(null);
-
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch('/api/admin/me', { cache: 'no-store' });
+        const r = await fetch('/api/admin/whoami', { cache: 'no-store' });
         const j = await r.json();
-        if (j?.ok) {
-          setAllowed(true);
-          setRole(j?.role ?? null);
-        } else {
+        if (j?.ok) setAllowed(true);
+        else {
           setAllowed(false);
           if (typeof window !== 'undefined') window.location.href = '/admin/login';
         }
@@ -25,15 +20,14 @@ function useAdminGate() {
       }
     })();
   }, []);
-
-  return { allowed, role };
+  return allowed;
 }
 
 type AdminUser = {
   id: string;
   email?: string;
   role?: 'superadmin' | 'coach' | 'viewer';
-  createdAt?: string;
+  createdAt?: string | null;
 };
 
 const pageWrap: React.CSSProperties = { background: '#f1f5f9', minHeight: '100%' };
@@ -43,18 +37,18 @@ const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWe
 const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid #cbd5e1', borderRadius: 12, padding: '10px 12px', height: 42, fontSize: 14 };
 
 export default function UsersPage() {
-  const { allowed, role } = useAdminGate();
+  const allowed = useAdminGate();
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [query, setQuery] = useState('');
 
-  // Add-user form
+  // create-user form
   const [email, setEmail] = useState('');
-  const [newRole, setNewRole] = useState<'superadmin' | 'coach' | 'viewer'>('viewer');
+  const [role, setRole] = useState<'superadmin' | 'coach' | 'viewer'>('viewer');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function refresh() {
+  async function reload() {
     try {
       const r = await fetch('/api/admin/users', { cache: 'no-store' });
       const j = await r.json();
@@ -66,8 +60,35 @@ export default function UsersPage() {
   }
 
   useEffect(() => {
-    if (allowed === true) refresh();
+    if (allowed === true) reload();
   }, [allowed]);
+
+  async function onCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, role }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setErr(j?.error || 'Failed to create user (superadmin only).');
+        setBusy(false);
+        return;
+      }
+      setEmail('');
+      setRole('viewer');
+      await reload();
+    } catch {
+      setErr('Network error, please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -79,32 +100,6 @@ export default function UsersPage() {
     );
   }, [users, query]);
 
-  async function handleAdd(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim()) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await fetch('/api/admin/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), role: newRole }),
-      });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        setErr(j?.error || 'Failed to add user.');
-      } else {
-        setEmail('');
-        setNewRole('viewer');
-        await refresh();
-      }
-    } catch {
-      setErr('Network error, please try again.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   if (allowed !== true) return null;
 
   return (
@@ -112,49 +107,56 @@ export default function UsersPage() {
       <main style={mainWrap}>
         <header style={{ marginBottom: 24 }}>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#0f172a' }}>Users</h1>
-          <p style={{ marginTop: 8, color: '#475569' }}>
-            Search users and review their roles.
-          </p>
+          <p style={{ marginTop: 8, color: '#475569' }}>Search users, review roles, and add new admins.</p>
         </header>
 
-        {/* Add user (superadmin only) */}
-        {role === 'superadmin' && (
-          <section style={card}>
-            <form onSubmit={handleAdd} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12 }}>
+        {/* Create user */}
+        <section style={card}>
+          <form onSubmit={onCreate} style={{ display: 'grid', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 12 }}>
               <div>
                 <label style={labelStyle}>Email</label>
                 <input
                   style={inputStyle}
+                  type="email"
+                  placeholder="person@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@example.com"
                 />
               </div>
               <div>
                 <label style={labelStyle}>Role</label>
-                <select
-                  style={inputStyle}
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as any)}
-                >
+                <select style={inputStyle} value={role} onChange={(e) => setRole(e.target.value as any)}>
                   <option value="viewer">viewer</option>
                   <option value="coach">coach</option>
                   <option value="superadmin">superadmin</option>
                 </select>
               </div>
-              <div style={{ alignSelf: 'end' }}>
-                <button
-                  type="submit"
-                  disabled={busy || !email.trim()}
-                  className="btn btn-primary"
-                >
-                  {busy ? 'Adding…' : 'Add user'}
-                </button>
-              </div>
-            </form>
-            {err && <div style={{ marginTop: 8, color: '#b91c1c' }}>{err}</div>}
-          </section>
-        )}
+            </div>
+
+            {err && <div style={{ color: '#b91c1c', fontSize: 14 }}>{err}</div>}
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                type="submit"
+                disabled={busy || !email.trim()}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: 10,
+                  background: busy || !email.trim() ? '#94a3b8' : '#0284c7',
+                  color: '#fff',
+                  border: 0,
+                  cursor: busy || !email.trim() ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {busy ? 'Adding…' : 'Add user'}
+              </button>
+            </div>
+          </form>
+          <div style={{ marginTop: 8, color: '#64748b', fontSize: 13 }}>
+            Only <strong>superadmin</strong> can add users; others will see a “forbidden” message.
+          </div>
+        </section>
 
         {/* Search */}
         <section style={card}>
