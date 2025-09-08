@@ -1,3 +1,6 @@
+// /lib/adminAuth.ts
+import 'server-only';   // ⬅️ add this line, must be first
+
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
