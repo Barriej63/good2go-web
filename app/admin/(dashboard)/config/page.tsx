@@ -1,3 +1,6 @@
+'use client';
+import React, { useEffect, useMemo, useState } from 'react';
+
 function useAdminGate() {
   const [allowed, setAllowed] = React.useState<boolean | null>(null);
   React.useEffect(() => {
