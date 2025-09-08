@@ -4,66 +4,49 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 type Booking = {
   id: string;
-  createdAt?: string;      // ISO
+  createdAt?: string;
   name?: string;
   email?: string;
   region?: string;
-  slot?: string;           // "YYYY-MM-DD HH:MM–HH:MM"
+  slot?: string;
   venue?: string;
-  packageType?: string;    // baseline | package4
+  packageType?: string;
 };
 
-type AdminConfig = {
-  regions?: string[];
-  timeslots?: any;
-};
+type AdminConfig = { regions?: string[] };
 
-/* ---------- styles ---------- */
 const pageWrap: React.CSSProperties = { background: '#f1f5f9', minHeight: '100%' };
 const mainWrap: React.CSSProperties = { maxWidth: 1120, margin: '0 auto', padding: '32px 20px 80px' };
-const card: React.CSSProperties = {
-  background: '#fff',
-  border: '1px solid #e5e7eb',
-  borderRadius: 16,
-  padding: 20,
-  boxShadow: '0 1px 2px rgba(0,0,0,.04)',
-  marginBottom: 24
-};
+const card: React.CSSProperties = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,.04)', marginBottom: 24 };
 const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWeight: 600, color: '#334155', marginBottom: 8 };
 const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid #cbd5e1', borderRadius: 12, padding: '10px 12px', height: 42, fontSize: 14 };
 
-/** Gate using API (client-safe). Returns: 'superadmin' | 'coach' | 'viewer' | null */
 function useGate() {
-  const [role, setRole] = useState<string | null>(null);
-  const [checked, setChecked] = useState(false);
-
+  const [allowed, setAllowed] = useState<boolean | null>(null);
   useEffect(() => {
-    let isMounted = true;
     (async () => {
       try {
         const r = await fetch('/api/admin/whoami', { cache: 'no-store' });
-        const j = await r.json().catch(() => ({}));
-        if (isMounted) setRole(j?.role ?? null);
+        const j = await r.json();
+        setAllowed(Boolean(j?.ok));
+        if (!j?.ok) window.location.href = '/admin/login';
       } catch {
-        if (isMounted) setRole(null);
-      } finally {
-        if (isMounted) setChecked(true);
+        setAllowed(false);
+        window.location.href = '/admin/login';
       }
     })();
-    return () => { isMounted = false; };
   }, []);
-
-  return { checked, role };
+  return allowed;
 }
 
 export default function BookingsPage() {
-  const { checked, role } = useGate();
+  const allowed = useGate();
 
   const [regions, setRegions] = useState<string[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
 
   const [regionFilter, setRegionFilter] = useState<string>('all');
-  const [dateFilter, setDateFilter] = useState<string>(''); // YYYY-MM-DD
+  const [dateFilter, setDateFilter] = useState<string>('');
   const [showCount, setShowCount] = useState(20);
 
   useEffect(() => {
@@ -71,13 +54,12 @@ export default function BookingsPage() {
       try {
         const [cfgRes, bRes] = await Promise.all([
           fetch('/api/admin/config', { cache: 'no-store' }),
-          fetch('/api/admin/bookings?limit=200', { cache: 'no-store' }) // newest first
+          fetch('/api/admin/bookings?limit=200', { cache: 'no-store' }),
         ]);
         const cfg: AdminConfig = (await cfgRes.json()) || {};
         const bJson = await bRes.json();
         setRegions(Array.isArray(cfg.regions) ? cfg.regions : []);
-        const items: Booking[] = Array.isArray(bJson?.items) ? bJson.items : [];
-        setBookings(items);
+        setBookings(Array.isArray(bJson?.items) ? bJson.items : []);
       } catch (e) {
         console.error('load admin data failed', e);
       }
@@ -91,7 +73,6 @@ export default function BookingsPage() {
     }
     if (dateFilter) {
       list = list.filter(b => {
-        // accept either b.slot starts with 'YYYY-MM-DD' or createdAt date
         const slotDate = (b.slot || '').slice(0, 10);
         const createdDate = (b.createdAt || '').slice(0, 10);
         return slotDate === dateFilter || createdDate === dateFilter;
@@ -102,14 +83,7 @@ export default function BookingsPage() {
 
   const visible = filtered.slice(0, showCount);
 
-  // While checking, render nothing to avoid flicker
-  if (!checked) return null;
-
-  // Not logged in → soft redirect (client-side)
-  if (!role) {
-    if (typeof window !== 'undefined') window.location.href = '/admin/login';
-    return null;
-  }
+  if (allowed !== true) return null;
 
   return (
     <div style={pageWrap}>
@@ -187,7 +161,6 @@ export default function BookingsPage() {
             </table>
           </div>
 
-          {/* Load more */}
           {visible.length < filtered.length && (
             <div style={{ marginTop: 16 }}>
               <button
