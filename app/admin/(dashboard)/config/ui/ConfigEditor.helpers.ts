@@ -1,139 +1,179 @@
-// Helper functions for managing regions, venues, and slots.
-// SAFE: pure functions that return new objects (no in-place mutation).
-
+// /app/admin/(dashboard)/config/ui/ConfigEditor.helpers.ts
 export type SlotDef = {
-  weekday: number; // 0..6 Sun..Sat
-  start: string;   // 'HH:MM'
-  end: string;     // 'HH:MM'  (kept for compatibility with booking UI)
+  weekday: number;
+  start: string;
+  end: string;
   venueAddress?: string | null;
   note?: string | null;
 };
 
 export type SettingsDoc = {
   regions: string[];
-  slots: Record<string, SlotDef[]>;      // per-region slots
-  venues?: Record<string, string[]>;     // per-region list of venues
+  venues: Record<string, string[]>;     // region -> list of venue names/addresses
+  slots:   Record<string, SlotDef[]>;   // region -> list of slots
 };
 
-/* ---- Time utils ---- */
-export function isValidHHMM(s: string): boolean {
-  return /^\d{1,2}:\d{2}$/.test(s) && (() => {
-    const [h, m] = s.split(':').map(Number);
-    return h >= 0 && h <= 23 && m >= 0 && m <= 59;
-  })();
-}
-export function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-export function fromMinutes(mins: number): string {
-  let m = ((mins % 1440) + 1440) % 1440; // wrap
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
-}
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-/* ---- Regions ---- */
+/** ---------- local mutators (UI state) ---------- */
 export function addRegion(doc: SettingsDoc, name: string): SettingsDoc {
-  const n = (name || '').trim();
-  if (!n) return doc;
-  if ((doc.regions || []).includes(n)) return doc;
+  if (!name.trim()) return doc;
+  if (doc.regions.includes(name)) return doc;
   return {
     ...doc,
-    regions: [...(doc.regions || []), n],
-    slots: { ...(doc.slots || {}), [n]: (doc.slots?.[n] || []) },
-    venues: { ...(doc.venues || {}), [n]: (doc.venues?.[n] || []) },
+    regions: [...doc.regions, name],
+    venues: { ...doc.venues, [name]: doc.venues[name] ?? [] },
+    slots:  { ...doc.slots,  [name]: doc.slots[name]  ?? [] },
   };
 }
+
 export function removeRegion(doc: SettingsDoc, name: string): SettingsDoc {
-  const regions = (doc.regions || []).filter(r => r !== name);
-  const { [name]: _s, ...restSlots } = doc.slots || {};
-  const { [name]: _v, ...restVenues } = doc.venues || {};
-  return { ...doc, regions, slots: restSlots, venues: restVenues };
+  if (!doc.regions.includes(name)) return doc;
+  const { [name]: _v, ...restVenues } = doc.venues;
+  const { [name]: _s, ...restSlots }  = doc.slots;
+  return {
+    ...doc,
+    regions: doc.regions.filter(r => r !== name),
+    venues: restVenues,
+    slots:  restSlots,
+  };
 }
 
-/* ---- Venues ---- */
 export function addVenue(doc: SettingsDoc, region: string, venue: string): SettingsDoc {
-  if (!region) return doc;
-  const v = (venue || '').trim();
-  if (!v) return doc;
-  const list = [ ...(doc.venues?.[region] || []) ];
-  if (list.includes(v)) return doc;
-  const venues = { ...(doc.venues || {}), [region]: [...list, v] };
-  return { ...doc, venues };
+  if (!region || !venue.trim()) return doc;
+  const list = doc.venues[region] ?? [];
+  if (list.includes(venue)) return doc;
+  return {
+    ...doc,
+    venues: { ...doc.venues, [region]: [...list, venue] }
+  };
 }
+
 export function removeVenue(doc: SettingsDoc, region: string, venue: string): SettingsDoc {
   if (!region) return doc;
-  const list = (doc.venues?.[region] || []).filter(x => x !== venue);
-  const venues = { ...(doc.venues || {}), [region]: list };
-  return { ...doc, venues };
+  const list = doc.venues[region] ?? [];
+  return {
+    ...doc,
+    venues: { ...doc.venues, [region]: list.filter(v => v !== venue) }
+  };
 }
 
-/* ---- Single-slot ops ---- */
-export function addSlot(doc: SettingsDoc, region: string, seed?: Partial<SlotDef>): SettingsDoc {
-  if (!region) return doc;
-  const arr = [ ...(doc.slots?.[region] || []) ];
-  const start = seed?.start ?? '09:00';
-  const end   = seed?.end   ?? '10:00';
-  arr.push({
-    weekday: seed?.weekday ?? 1,
-    start, end,
-    venueAddress: seed?.venueAddress ?? '',
-    note: seed?.note ?? null,
-  });
-  const slots = { ...(doc.slots || {}), [region]: arr };
-  return { ...doc, slots };
+export function addSlot(doc: SettingsDoc, region: string): SettingsDoc {
+  const list = doc.slots[region] ?? [];
+  const next: SlotDef = { weekday: 2, start: '17:30', end: '18:30', venueAddress: '', note: '' };
+  return {
+    ...doc,
+    slots: { ...doc.slots, [region]: [...list, next] }
+  };
 }
-export function updateSlot(doc: SettingsDoc, region: string, index: number, patch: Partial<SlotDef>): SettingsDoc {
-  if (!region) return doc;
-  const arr = [ ...(doc.slots?.[region] || []) ];
-  if (index < 0 || index >= arr.length) return doc;
-  arr[index] = { ...arr[index], ...patch };
-  const slots = { ...(doc.slots || {}), [region]: arr };
-  return { ...doc, slots };
+
+export function updateSlot(
+  doc: SettingsDoc,
+  region: string,
+  index: number,
+  patch: Partial<SlotDef>
+): SettingsDoc {
+  const list = doc.slots[region] ?? [];
+  if (index < 0 || index >= list.length) return doc;
+  const next = list.slice();
+  next[index] = { ...next[index], ...patch };
+  return { ...doc, slots: { ...doc.slots, [region]: next } };
 }
+
 export function removeSlot(doc: SettingsDoc, region: string, index: number): SettingsDoc {
-  if (!region) return doc;
-  const arr = [ ...(doc.slots?.[region] || []) ];
-  if (index < 0 || index >= arr.length) return doc;
-  arr.splice(index, 1);
-  const slots = { ...(doc.slots || {}), [region]: arr };
-  return { ...doc, slots };
+  const list = doc.slots[region] ?? [];
+  if (index < 0 || index >= list.length) return doc;
+  const next = list.slice();
+  next.splice(index, 1);
+  return { ...doc, slots: { ...doc.slots, [region]: next } };
 }
 
-/* ---- Grid generator (e.g., 10-min steps) ---- */
+/** ---------- utilities ---------- */
+export function isValidHHMM(v: string) {
+  return /^\d{2}:\d{2}$/.test(v);
+}
+
+function pad2(n: number){ return String(n).padStart(2,'0'); }
+function toMinutes(hhmm: string){ const [h,m]=hhmm.split(':').map(Number); return h*60+m; }
+function fromMinutes(m: number){ const h=Math.floor(m/60), mm=m%60; return `${pad2(h)}:${pad2(mm)}`; }
+
+/** Generate a grid of slots between a window on a weekday. */
 export function generateGridSlots(
   doc: SettingsDoc,
   region: string,
-  opts: {
-    weekday: number;         // 0..6
-    windowStart: string;     // 'HH:MM'
-    windowEnd: string;       // 'HH:MM' (exclusive)
-    stepMinutes: number;     // e.g., 10
-    venueAddress?: string;   // optional
-    note?: string | null;    // optional
-  }
+  opts: { weekday: number; windowStart: string; windowEnd: string; stepMinutes: number; venueAddress?: string }
 ): SettingsDoc {
-  if (!region) return doc;
-  const { weekday, windowStart, windowEnd, stepMinutes, venueAddress, note } = opts;
+  const { weekday, windowStart, windowEnd, stepMinutes, venueAddress } = opts;
   if (!isValidHHMM(windowStart) || !isValidHHMM(windowEnd) || stepMinutes <= 0) return doc;
 
-  const startMin = toMinutes(windowStart);
-  const endMin   = toMinutes(windowEnd);
-  if (endMin <= startMin) return doc;
+  const start = toMinutes(windowStart);
+  const end   = toMinutes(windowEnd);
+  if (end <= start) return doc;
 
-  const arr = [ ...(doc.slots?.[region] || []) ];
-  for (let t = startMin; t < endMin; t += stepMinutes) {
-    const start = fromMinutes(t);
-    const end   = fromMinutes(Math.min(t + stepMinutes, endMin)); // keep `end` for UI compatibility
-    arr.push({
+  const list = doc.slots[region] ?? [];
+  const gen: SlotDef[] = [];
+  for (let t = start; t + stepMinutes <= end; t += stepMinutes) {
+    gen.push({
       weekday,
-      start,
-      end,
+      start: fromMinutes(t),
+      end:   fromMinutes(t + stepMinutes),
       venueAddress: venueAddress ?? '',
-      note: note ?? null,
+      note: ''
     });
   }
-  const slots = { ...(doc.slots || {}), [region]: arr };
-  return { ...doc, slots };
+  return { ...doc, slots: { ...doc.slots, [region]: [...list, ...gen] } };
+}
+
+/** ---------- server calls for /api/admin/slots (needs token) ---------- */
+
+const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN ?? '';
+
+async function authedFetch(input: RequestInfo, init?: RequestInit) {
+  if (!ADMIN_TOKEN) {
+    // Helpful console message if the public token isn't configured.
+    console.warn('NEXT_PUBLIC_ADMIN_TOKEN is not set – admin slot edits will be rejected by the API.');
+  }
+  const headers = new Headers(init?.headers || {});
+  headers.set('content-type', 'application/json');
+  headers.set('x-admin-token', ADMIN_TOKEN);
+  const res = await fetch(input, { ...init, headers });
+  return res;
+}
+
+/** Create a single slot on the server */
+export async function apiAddSlot(region: string, slot: SlotDef) {
+  const res = await authedFetch('/api/admin/slots', {
+    method: 'POST',
+    body: JSON.stringify({ region, slot })
+  });
+  if (!res.ok) {
+    const j = await safeJson(res);
+    throw new Error(`add_slot_failed${j?.error ? `: ${j.error}` : ''}`);
+  }
+}
+
+/** Patch a single slot (by index) */
+export async function apiPatchSlot(region: string, index: number, patch: Partial<SlotDef>) {
+  const res = await authedFetch('/api/admin/slots', {
+    method: 'PATCH',
+    body: JSON.stringify({ region, index, ...patch })
+  });
+  if (!res.ok) {
+    const j = await safeJson(res);
+    throw new Error(`patch_slot_failed${j?.error ? `: ${j.error}` : ''}`);
+  }
+}
+
+/** Delete a single slot */
+export async function apiDeleteSlot(region: string, index: number) {
+  const url = `/api/admin/slots?region=${encodeURIComponent(region)}&index=${index}`;
+  const res = await authedFetch(url, { method: 'DELETE' });
+  if (!res.ok) {
+    const j = await safeJson(res);
+    throw new Error(`delete_slot_failed${j?.error ? `: ${j.error}` : ''}`);
+  }
+}
+
+async function safeJson(res: Response) {
+  try { return await res.json(); } catch { return null; }
 }
