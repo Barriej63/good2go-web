@@ -2,8 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
-type SlotObj = {
-  weekday: number;
+type SlotDef = {
+  weekday: number;           // 0..6 (Sun..Sat)
   start: string;
   end: string;
   venueAddress?: string | null;
@@ -16,7 +16,7 @@ type Booking = {
   name?: string;
   email?: string;
   region?: string;
-  slot?: string | SlotObj;   // <-- can be string OR object
+  slot?: string | SlotDef;   // <-- can be string OR object
   venue?: string;
   packageType?: string;
 };
@@ -56,17 +56,25 @@ function useGate() {
   return allowed;
 }
 
-function wdName(wd: number) {
-  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][Math.max(0, Math.min(6, wd))] || '';
-}
+const WEEK = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-function formatSlot(slot?: string | SlotObj) {
+/** Format a slot that may be a string or a SlotDef object */
+function formatSlot(slot: Booking['slot']): string {
   if (!slot) return '-';
   if (typeof slot === 'string') return slot;
-  // object form
-  const left = `${wdName(slot.weekday)} ${slot.start}-${slot.end}`;
-  const extra = slot.venueAddress ? ` @ ${slot.venueAddress}` : '';
-  return left + extra;
+
+  const w = typeof slot.weekday === 'number' && WEEK[slot.weekday] ? WEEK[slot.weekday] : '';
+  const range = [slot.start, slot.end].filter(Boolean).join('–');
+  const addr = slot.venueAddress ? ` · ${slot.venueAddress}` : '';
+  // If we have at least a time range or weekday, show that; else JSON fallback
+  const core = [w, range].filter(Boolean).join(' ');
+  return core ? `${core}${addr}` : JSON.stringify(slot);
+}
+
+/** Extract YYYY-MM-DD for filtering, if slot is a string in that format */
+function slotDateForFilter(slot: Booking['slot']): string {
+  if (typeof slot === 'string') return slot.slice(0, 10); // e.g. "2025-03-01 17:30–18:30"
+  return ''; // object slots don’t carry a full date; fall back to createdAt
 }
 
 export default function BookingsPage() {
@@ -102,11 +110,9 @@ export default function BookingsPage() {
     }
     if (dateFilter) {
       list = list.filter(b => {
-        const slotDate = typeof b.slot === 'string'
-          ? b.slot.slice(0, 10)
-          : null;
+        const slotDate = slotDateForFilter(b.slot);
         const createdDate = (b.createdAt || '').slice(0, 10);
-        return (slotDate ? slotDate === dateFilter : false) || createdDate === dateFilter;
+        return slotDate === dateFilter || createdDate === dateFilter;
       });
     }
     return list;
@@ -168,19 +174,27 @@ export default function BookingsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visible.map((b) => (
-                  <tr key={b.id}>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>
-                      {b.createdAt || '-'}
-                    </td>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.name || '-'}</td>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.email || '-'}</td>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.region || '-'}</td>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{formatSlot(b.slot)}</td>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.venue || '-'}</td>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.packageType || '-'}</td>
-                  </tr>
-                ))}
+                {visible.map((b) => {
+                  const slotText = formatSlot(b.slot);
+                  const venueText =
+                    typeof b.venue === 'string' ? b.venue :
+                    (typeof b.slot === 'object' && b.slot?.venueAddress) ? String(b.slot.venueAddress) :
+                    '-';
+
+                  return (
+                    <tr key={b.id}>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9', whiteSpace: 'nowrap' }}>
+                        {b.createdAt || '-'}
+                      </td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.name || '-'}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.email || '-'}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.region || '-'}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{slotText}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{venueText}</td>
+                      <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.packageType || '-'}</td>
+                    </tr>
+                  );
+                })}
                 {!visible.length && (
                   <tr>
                     <td colSpan={7} style={{ padding: '14px 12px', color: '#64748b' }}>
@@ -192,11 +206,19 @@ export default function BookingsPage() {
             </table>
           </div>
 
+          {/* Load more */}
           {visible.length < filtered.length && (
             <div style={{ marginTop: 16 }}>
               <button
                 onClick={() => setShowCount((n) => n + 20)}
-                style={{ padding: '10px 16px', borderRadius: 10, background: '#0284c7', color: '#fff', border: 0, cursor: 'pointer' }}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: 10,
+                  background: '#0284c7',
+                  color: '#fff',
+                  border: 0,
+                  cursor: 'pointer'
+                }}
               >
                 View more
               </button>
