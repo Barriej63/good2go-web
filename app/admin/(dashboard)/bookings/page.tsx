@@ -2,6 +2,26 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
+function useGate() {
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/admin/me', { cache: 'no-store' });
+        const j = await r.json();
+        setAllowed(!!j?.ok);
+        if (!j?.ok && typeof window !== 'undefined') {
+          window.location.href = '/admin/login';
+        }
+      } catch {
+        setAllowed(false);
+        if (typeof window !== 'undefined') window.location.href = '/admin/login';
+      }
+    })();
+  }, []);
+  return allowed;
+}
+
 type Booking = {
   id: string;
   createdAt?: string;
