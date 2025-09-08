@@ -1,9 +1,7 @@
-// /app/api/admin/me/route.ts
 import { NextResponse } from 'next/server';
-import { isAdminCookie, getAdminRole } from '@/lib/adminAuth';
+import { isAdminCookie } from '@/lib/adminAuth';
 
 export async function GET() {
   const ok = await isAdminCookie();
-  const role = ok ? await getAdminRole() : null;
-  return NextResponse.json({ ok, role });
+  return NextResponse.json({ ok });
 }
