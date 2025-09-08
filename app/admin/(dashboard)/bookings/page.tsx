@@ -1,17 +1,16 @@
 'use client';
+
 import React, { useEffect, useMemo, useState } from 'react';
-import { redirect } from 'next/navigation';
-import { isAdminCookie } from '@/lib/adminAuth';
 
 type Booking = {
   id: string;
-  createdAt?: string;   // ISO
+  createdAt?: string;      // ISO
   name?: string;
   email?: string;
   region?: string;
-  slot?: string;        // "YYYY-MM-DD HH:MM–HH:MM"
+  slot?: string;           // "YYYY-MM-DD HH:MM–HH:MM"
   venue?: string;
-  packageType?: string; // baseline | package4
+  packageType?: string;    // baseline | package4
 };
 
 type AdminConfig = {
@@ -19,26 +18,46 @@ type AdminConfig = {
   timeslots?: any;
 };
 
+/* ---------- styles ---------- */
 const pageWrap: React.CSSProperties = { background: '#f1f5f9', minHeight: '100%' };
 const mainWrap: React.CSSProperties = { maxWidth: 1120, margin: '0 auto', padding: '32px 20px 80px' };
-const card: React.CSSProperties = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,.04)', marginBottom: 24 };
+const card: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #e5e7eb',
+  borderRadius: 16,
+  padding: 20,
+  boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+  marginBottom: 24
+};
 const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWeight: 600, color: '#334155', marginBottom: 8 };
 const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid #cbd5e1', borderRadius: 12, padding: '10px 12px', height: 42, fontSize: 14 };
 
+/** Gate using API (client-safe). Returns: 'superadmin' | 'coach' | 'viewer' | null */
 function useGate() {
-  const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [role, setRole] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false);
+
   useEffect(() => {
+    let isMounted = true;
     (async () => {
-      const ok = await isAdminCookie();
-      setAllowed(!!ok);
+      try {
+        const r = await fetch('/api/admin/whoami', { cache: 'no-store' });
+        const j = await r.json().catch(() => ({}));
+        if (isMounted) setRole(j?.role ?? null);
+      } catch {
+        if (isMounted) setRole(null);
+      } finally {
+        if (isMounted) setChecked(true);
+      }
     })();
+    return () => { isMounted = false; };
   }, []);
-  return allowed;
+
+  return { checked, role };
 }
 
 export default function BookingsPage() {
-  // (Client component cannot redirect synchronously; we soft gate)
-  const allowed = useGate();
+  const { checked, role } = useGate();
 
   const [regions, setRegions] = useState<string[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -83,12 +102,14 @@ export default function BookingsPage() {
 
   const visible = filtered.slice(0, showCount);
 
-  if (allowed === false) {
-    // SSR redirect not available in client, so just nudge them
+  // While checking, render nothing to avoid flicker
+  if (!checked) return null;
+
+  // Not logged in → soft redirect (client-side)
+  if (!role) {
     if (typeof window !== 'undefined') window.location.href = '/admin/login';
     return null;
   }
-  if (allowed === null) return null;
 
   return (
     <div style={pageWrap}>
