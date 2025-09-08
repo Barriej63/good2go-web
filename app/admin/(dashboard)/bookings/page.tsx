@@ -2,13 +2,21 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
+type SlotObj = {
+  weekday: number;
+  start: string;
+  end: string;
+  venueAddress?: string | null;
+  note?: string | null;
+};
+
 type Booking = {
   id: string;
   createdAt?: string;
   name?: string;
   email?: string;
   region?: string;
-  slot?: string;
+  slot?: string | SlotObj;   // <-- can be string OR object
   venue?: string;
   packageType?: string;
 };
@@ -48,6 +56,19 @@ function useGate() {
   return allowed;
 }
 
+function wdName(wd: number) {
+  return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][Math.max(0, Math.min(6, wd))] || '';
+}
+
+function formatSlot(slot?: string | SlotObj) {
+  if (!slot) return '-';
+  if (typeof slot === 'string') return slot;
+  // object form
+  const left = `${wdName(slot.weekday)} ${slot.start}-${slot.end}`;
+  const extra = slot.venueAddress ? ` @ ${slot.venueAddress}` : '';
+  return left + extra;
+}
+
 export default function BookingsPage() {
   const allowed = useGate();
 
@@ -81,9 +102,11 @@ export default function BookingsPage() {
     }
     if (dateFilter) {
       list = list.filter(b => {
-        const slotDate = (b.slot || '').slice(0, 10);
+        const slotDate = typeof b.slot === 'string'
+          ? b.slot.slice(0, 10)
+          : null;
         const createdDate = (b.createdAt || '').slice(0, 10);
-        return slotDate === dateFilter || createdDate === dateFilter;
+        return (slotDate ? slotDate === dateFilter : false) || createdDate === dateFilter;
       });
     }
     return list;
@@ -153,7 +176,7 @@ export default function BookingsPage() {
                     <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.name || '-'}</td>
                     <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.email || '-'}</td>
                     <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.region || '-'}</td>
-                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.slot || '-'}</td>
+                    <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{formatSlot(b.slot)}</td>
                     <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.venue || '-'}</td>
                     <td style={{ padding: '10px 12px', borderBottom: '1px solid #f1f5f9' }}>{b.packageType || '-'}</td>
                   </tr>
@@ -173,14 +196,7 @@ export default function BookingsPage() {
             <div style={{ marginTop: 16 }}>
               <button
                 onClick={() => setShowCount((n) => n + 20)}
-                style={{
-                  padding: '10px 16px',
-                  borderRadius: 10,
-                  background: '#0284c7',
-                  color: '#fff',
-                  border: 0,
-                  cursor: 'pointer'
-                }}
+                style={{ padding: '10px 16px', borderRadius: 10, background: '#0284c7', color: '#fff', border: 0, cursor: 'pointer' }}
               >
                 View more
               </button>
