@@ -5,20 +5,21 @@ import { NextResponse } from 'next/server';
 
 export type AdminRole = 'superadmin' | 'coach' | 'viewer';
 
-const COOKIE_NAME = 'g2g_admin';
-const ROLE_COOKIE  = 'g2g_role';
-const COOKIE_MAX_AGE = 60 * 60 * 8; // 8h
+export const COOKIE_NAME = 'g2g_admin';
+export const ROLE_COOKIE  = 'g2g_role';
+export const COOKIE_MAX_AGE = 60 * 60 * 8; // 8h
 
 export function roleFromToken(token: string): AdminRole | null {
   if (!token) return null;
-  if (process.env.ADMIN_TOKEN && token === process.env.ADMIN_TOKEN) return 'superadmin';
+  if (process.env.ADMIN_TOKEN  && token === process.env.ADMIN_TOKEN)  return 'superadmin';
   if (process.env.COACH_TOKEN  && token === process.env.COACH_TOKEN)  return 'coach';
   if (process.env.VIEWER_TOKEN && token === process.env.VIEWER_TOKEN) return 'viewer';
   return null;
 }
 
+/** Gate helpers (server only) */
 export async function isAdminCookie(): Promise<boolean> {
-  const jar = cookies();
+  const jar   = cookies();
   const token = jar.get(COOKIE_NAME)?.value || '';
   const role  = jar.get(ROLE_COOKIE)?.value as AdminRole | undefined;
   const mapped = roleFromToken(token);
@@ -26,7 +27,7 @@ export async function isAdminCookie(): Promise<boolean> {
 }
 
 export async function getAdminRole(): Promise<AdminRole | null> {
-  const jar = cookies();
+  const jar   = cookies();
   const token = jar.get(COOKIE_NAME)?.value || '';
   const role  = jar.get(ROLE_COOKIE)?.value as AdminRole | undefined;
   const mapped = roleFromToken(token);
@@ -34,17 +35,33 @@ export async function getAdminRole(): Promise<AdminRole | null> {
   return role;
 }
 
+/** Convenience boolean check used by admin pages that must be superadmin */
+export function requireSuperadmin(role: AdminRole | null): boolean {
+  return role === 'superadmin';
+}
+
+/** Cookie management used by /api/admin/login + /logout */
 export function setAdminCookie(res: NextResponse, token: string) {
   const role = roleFromToken(token);
   if (!role) throw new Error('invalid_token_role');
 
   res.cookies.set({
-    name: COOKIE_NAME, value: token, httpOnly: true, secure: true,
-    sameSite: 'lax', path: '/', maxAge: COOKIE_MAX_AGE,
+    name: COOKIE_NAME,
+    value: token,
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: COOKIE_MAX_AGE,
   });
   res.cookies.set({
-    name: ROLE_COOKIE, value: role,  httpOnly: true, secure: true,
-    sameSite: 'lax', path: '/', maxAge: COOKIE_MAX_AGE,
+    name: ROLE_COOKIE,
+    value: role,
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: COOKIE_MAX_AGE,
   });
 }
 
@@ -52,3 +69,4 @@ export function clearAdminCookie(res: NextResponse) {
   res.cookies.set({ name: COOKIE_NAME, value: '', path: '/', maxAge: 0 });
   res.cookies.set({ name: ROLE_COOKIE,  value: '', path: '/', maxAge: 0 });
 }
+
