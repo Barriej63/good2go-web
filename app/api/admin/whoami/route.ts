@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { isAdminCookie, getAdminRole } from '@/lib/adminAuth';
 
-export const dynamic = 'force-dynamic';
-
 export async function GET() {
   const ok = await isAdminCookie();
   const role = ok ? await getAdminRole() : null;
