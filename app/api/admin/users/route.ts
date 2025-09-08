@@ -1,24 +1,20 @@
-// /app/api/admin/users/route.ts
-import { NextResponse } from 'next/server';
-import { isAdminCookie, getAdminRole, requireSuperadmin } from '@/lib/adminAuth';
+import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebaseAdmin';
-import { FieldValue } from 'firebase-admin/firestore';
+import { DocumentData, FieldValue, QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { isAdminCookie, getAdminRole, requireSuperadmin } from '@/lib/adminAuth';
 
 export const dynamic = 'force-dynamic';
 
-function unauthorized() {
-  return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-}
-
+/** GET — list admin users (newest first) */
 export async function GET() {
   const ok = await isAdminCookie();
-  if (!ok) return unauthorized();
+  if (!ok) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
   const db = getAdminDb();
   const snap = await db.collection('admin_users').orderBy('createdAt', 'desc').limit(500).get();
 
-  const items = snap.docs.map(d => {
-    const data = d.data() || {};
+  const items = snap.docs.map((d: QueryDocumentSnapshot<DocumentData>) => {
+    const data = (d.data() || {}) as any;
     return {
       id: d.id,
       email: data.email || '',
@@ -30,9 +26,10 @@ export async function GET() {
   return NextResponse.json({ ok: true, items });
 }
 
-export async function POST(req: Request) {
+/** POST — create a new admin user (superadmin only) */
+export async function POST(req: NextRequest) {
   const ok = await isAdminCookie();
-  if (!ok) return unauthorized();
+  if (!ok) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
   const role = await getAdminRole();
   if (!requireSuperadmin(role)) {
@@ -41,20 +38,21 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const email = (body?.email || '').trim().toLowerCase();
-  const newRole = body?.role === 'superadmin' || body?.role === 'coach' || body?.role === 'viewer'
-    ? body.role
-    : null;
+  const newRole = (body?.role || 'viewer').trim().toLowerCase();
 
-  if (!email || !newRole) {
-    return NextResponse.json({ ok: false, error: 'missing email or role' }, { status: 400 });
+  if (!email) {
+    return NextResponse.json({ ok: false, error: 'missing_email' }, { status: 400 });
+  }
+  if (!['superadmin', 'coach', 'viewer'].includes(newRole)) {
+    return NextResponse.json({ ok: false, error: 'invalid_role' }, { status: 400 });
   }
 
   const db = getAdminDb();
-  const doc = await db.collection('admin_users').add({
+  await db.collection('admin_users').add({
     email,
     role: newRole,
     createdAt: FieldValue.serverTimestamp(),
   });
 
-  return NextResponse.json({ ok: true, id: doc.id });
+  return NextResponse.json({ ok: true });
 }
