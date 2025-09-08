@@ -23,9 +23,9 @@ function toWeekday(v: unknown): number | null {
   const map: Record<string, number> = {
     sun: 0, sunday: 0,
     mon: 1, monday: 1,
-    tue: 2, tuesday: 2,
+    tue: 2, tues: 2, tuesday: 2,
     wed: 3, wednesday: 3,
-    thu: 4, thursday: 4,
+    thu: 4, thurs: 4, thursday: 4,
     fri: 5, friday: 5,
     sat: 6, saturday: 6,
   };
@@ -36,36 +36,34 @@ function regionFromId(id: string): string | null {
   // Accept timeslots_<Region> or timeslots-<Region>
   const m = id.match(/^timeslots[-_](.+)$/i);
   if (!m) return null;
-  // Preserve region name exactly as in Firestore (incl. spaces/case)
-  return m[1];
+  return m[1]; // preserve original casing/spaces
+}
+
+// normalize venue/note keys from various editor shapes
+function normalizeVenue(it: any): { venueAddress: string | null; note: string | null } {
+  // Prefer the canonical field if present
+  const v =
+    it?.venueAddress ??
+    it?.venue ??
+    it?.venue_name ??
+    it?.venueName ??
+    it?.location ??
+    null;
+
+  const n =
+    it?.note ??
+    it?.notes ??
+    it?.comment ??
+    null;
+
+  return {
+    venueAddress: v != null ? String(v) : null,
+    note: n != null ? String(n) : null,
+  };
 }
 
 export async function GET() {
   const db = getAdminDb();
-
-  // 1) Load the optional venues map: config/venues { [region]: string[] }
-  let regionVenues: Record<string, string[]> = {};
-  try {
-    const venuesDoc = await db.collection('config').doc('venues').get();
-    if (venuesDoc.exists) {
-      const data = venuesDoc.data() as any;
-      if (data && typeof data === 'object') {
-        // normalize values to arrays of strings
-        for (const [k, v] of Object.entries<any>(data)) {
-          if (Array.isArray(v)) {
-            regionVenues[k] = v.map(String).filter(Boolean);
-          } else if (typeof v === 'string' && v.trim()) {
-            regionVenues[k] = [v.trim()];
-          }
-        }
-      }
-    }
-  } catch (e) {
-    // non-fatal
-    console.warn('slots: failed to load config/venues', e);
-  }
-
-  // 2) Gather timeslots_* docs
   const snap = await db.collection('config').get();
 
   const out: SlotsOut = { regions: [], slots: {} };
@@ -78,28 +76,22 @@ export async function GET() {
     const data = doc.data() as any;
     const list: SlotDef[] = [];
 
-    const push = (s: SlotDef) => {
-      // If slot has no venue, try to populate from venues list
-      if (!s.venueAddress) {
-        const fallback = regionVenues[region]?.[0];
-        if (fallback) s.venueAddress = fallback;
-      }
-      list.push(s);
-    };
+    const push = (s: SlotDef) => list.push(s);
 
-    // Style A: explicit array
+    // Style A: explicit array { slots: [...] }
     if (Array.isArray(data?.slots)) {
       for (const it of data.slots as any[]) {
         const wd = toWeekday(it?.weekday ?? it?.weekdays);
         const st = it?.start;
         const en = it?.end;
         if (wd == null || !st || !en) continue;
+        const { venueAddress, note } = normalizeVenue(it);
         push({
           weekday: wd,
           start: String(st),
           end: String(en),
-          venueAddress: (it?.venueAddress ?? null) || null,
-          note: it?.note ?? null,
+          venueAddress,
+          note,
         });
       }
     }
@@ -107,21 +99,19 @@ export async function GET() {
     // Style B: single top-level fields
     const wdTop = toWeekday(data?.weekday ?? data?.weekdays);
     if (wdTop != null && data?.start && data?.end) {
+      const { venueAddress, note } = normalizeVenue(data);
       push({
         weekday: wdTop,
         start: String(data.start),
         end: String(data.end),
-        venueAddress: (data?.venueAddress ?? null) || null,
-        note: data?.note ?? null,
+        venueAddress,
+        note,
       });
     }
 
-    // Ensure the region is present even if no valid slots
     out.slots[region] = list;
   }
 
-  // Regions list = all keys, keep stable alpha sort
   out.regions = Object.keys(out.slots).sort((a, b) => a.localeCompare(b));
-
   return NextResponse.json(out, { status: 200 });
 }
