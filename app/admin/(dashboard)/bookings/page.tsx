@@ -2,26 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
-function useGate() {
-  const [allowed, setAllowed] = useState<boolean | null>(null);
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch('/api/admin/me', { cache: 'no-store' });
-        const j = await r.json();
-        setAllowed(!!j?.ok);
-        if (!j?.ok && typeof window !== 'undefined') {
-          window.location.href = '/admin/login';
-        }
-      } catch {
-        setAllowed(false);
-        if (typeof window !== 'undefined') window.location.href = '/admin/login';
-      }
-    })();
-  }, []);
-  return allowed;
-}
-
 type Booking = {
   id: string;
   createdAt?: string;
@@ -37,22 +17,31 @@ type AdminConfig = { regions?: string[] };
 
 const pageWrap: React.CSSProperties = { background: '#f1f5f9', minHeight: '100%' };
 const mainWrap: React.CSSProperties = { maxWidth: 1120, margin: '0 auto', padding: '32px 20px 80px' };
-const card: React.CSSProperties = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 16, padding: 20, boxShadow: '0 1px 2px rgba(0,0,0,.04)', marginBottom: 24 };
+const card: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #e5e7eb',
+  borderRadius: 16,
+  padding: 20,
+  boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+  marginBottom: 24,
+};
 const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWeight: 600, color: '#334155', marginBottom: 8 };
 const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid #cbd5e1', borderRadius: 12, padding: '10px 12px', height: 42, fontSize: 14 };
 
+/** Soft gate: ping /api/admin/me; if not ok, send to /admin/login */
 function useGate() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch('/api/admin/whoami', { cache: 'no-store' });
+        const r = await fetch('/api/admin/me', { cache: 'no-store' });
         const j = await r.json();
-        setAllowed(Boolean(j?.ok));
-        if (!j?.ok) window.location.href = '/admin/login';
+        const ok = Boolean(j?.ok);
+        setAllowed(ok);
+        if (!ok && typeof window !== 'undefined') window.location.href = '/admin/login';
       } catch {
         setAllowed(false);
-        window.location.href = '/admin/login';
+        if (typeof window !== 'undefined') window.location.href = '/admin/login';
       }
     })();
   }, []);
@@ -64,9 +53,8 @@ export default function BookingsPage() {
 
   const [regions, setRegions] = useState<string[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
-
   const [regionFilter, setRegionFilter] = useState<string>('all');
-  const [dateFilter, setDateFilter] = useState<string>('');
+  const [dateFilter, setDateFilter] = useState<string>(''); // YYYY-MM-DD
   const [showCount, setShowCount] = useState(20);
 
   useEffect(() => {
