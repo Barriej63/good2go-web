@@ -13,6 +13,14 @@ const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 type Props = { canEdit: boolean };
 
+type SlotDef = {
+  weekday: number;
+  start: string;
+  end: string;
+  venueAddress?: string;
+  note?: string;
+};
+
 export default function ConfigEditor({ canEdit }: Props) {
   // state
   const [cfg, setCfg] = useState<SettingsDoc>({ regions: [], slots: {}, venues: {} });
@@ -21,6 +29,8 @@ export default function ConfigEditor({ canEdit }: Props) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [filter, setFilter] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
   // generator controls
   const [gWeekday, setGWeekday] = useState(1);
   const [gStart, setGStart] = useState('17:30');
@@ -28,10 +38,11 @@ export default function ConfigEditor({ canEdit }: Props) {
   const [gStep, setGStep] = useState(10);
   const [gVenue, setGVenue] = useState('');
 
-  // load
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
+  /** Util: fresh load from server */
+  async function loadConfig() {
+    setLoading(true);
+    setError(null);
+    try {
       const r = await fetch('/api/admin/config', { cache: 'no-store' });
       const j = await r.json();
       const loaded: SettingsDoc = {
@@ -40,30 +51,81 @@ export default function ConfigEditor({ canEdit }: Props) {
         venues: j.venues || {},
       };
       setCfg(loaded);
-      setRegion(loaded.regions[0] || '');
-      setLoading(false);
+      setRegion(prev => prev || loaded.regions[0] || '');
       setDirty(false);
-    })();
-  }, []);
-
-  async function save() {
-    setSaving(true);
-    const r = await fetch('/api/admin/config', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(cfg),
-    });
-    setSaving(false);
-    if (!r.ok) alert('Save failed');
-    else setDirty(false);
+    } catch (e) {
+      console.error('load config failed', e);
+      setError('Failed to load configuration.');
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function withDirty(fn: (prev: SettingsDoc) => SettingsDoc) {
-    setCfg(prev => {
-      const next = fn(prev);
-      if (next !== prev) setDirty(true);
-      return next;
+  useEffect(() => {
+    loadConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Save regions + venues (not slots) to /api/admin/config */
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      // We persist regions + venues as a document (your existing behavior).
+      const payload: SettingsDoc = {
+        regions: cfg.regions || [],
+        venues: cfg.venues || {},
+        // keep slots in memory/UI; slot CRUD is proxied live (see below)
+        slots: cfg.slots || {},
+      };
+      const r = await fetch('/api/admin/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error('Save failed');
+      setDirty(false);
+    } catch (e) {
+      console.error(e);
+      setError('Save failed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Proxy helpers: live slot operations (writes to Firestore timeslots_<Region>) */
+  async function proxyAddSlot(regionName: string, slot: SlotDef) {
+    const r = await fetch('/api/admin/config/slots', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ region: regionName, slot }),
     });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j?.error || 'add_slot_failed');
+    }
+  }
+
+  async function proxyPatchSlot(regionName: string, index: number, patch: Partial<SlotDef>) {
+    const r = await fetch('/api/admin/config/slots', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ region: regionName, index, ...patch }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j?.error || 'patch_slot_failed');
+    }
+  }
+
+  async function proxyRemoveSlot(regionName: string, index: number) {
+    const r = await fetch(`/api/admin/config/slots?region=${encodeURIComponent(regionName)}&index=${index}`, {
+      method: 'DELETE',
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j?.error || 'delete_slot_failed');
+    }
   }
 
   const venues = useMemo(() => (cfg.venues?.[region] || []), [cfg, region]);
@@ -94,6 +156,7 @@ export default function ConfigEditor({ canEdit }: Props) {
           <p className="text-xs text-slate-500">
             Manage regions, venues and timeslots. {dirty ? <span className="text-amber-700">Unsaved changes</span> : 'Up to date'}
           </p>
+          {error && <p className="text-xs text-rose-600 mt-1">{error}</p>}
         </div>
         <div className="flex items-center gap-2">
           <input
@@ -133,7 +196,12 @@ export default function ConfigEditor({ canEdit }: Props) {
               onClick={() => {
                 const name = prompt('New region name?')?.trim();
                 if (!name) return;
-                withDirty(doc => addRegion(doc, name));
+                setError(null);
+                setCfg(prev => {
+                  const next = addRegion(prev, name);
+                  if (next !== prev) setDirty(true);
+                  return next;
+                });
                 setRegion(name);
               }}
             >
@@ -145,7 +213,12 @@ export default function ConfigEditor({ canEdit }: Props) {
               onClick={() => {
                 if (!region) return;
                 if (!confirm(`Remove region "${region}" and all its venues/slots?`)) return;
-                withDirty(doc => removeRegion(doc, region));
+                setError(null);
+                setCfg(prev => {
+                  const next = removeRegion(prev, region);
+                  if (next !== prev) setDirty(true);
+                  return next;
+                });
                 setRegion((cfg.regions.find(r => r !== region) || '') as string);
               }}
             >
@@ -173,7 +246,12 @@ export default function ConfigEditor({ canEdit }: Props) {
               onClick={() => {
                 const v = gVenue.trim();
                 if (!v) return;
-                withDirty(doc => addVenue(doc, region, v));
+                setError(null);
+                setCfg(prev => {
+                  const next = addVenue(prev, region, v);
+                  if (next !== prev) setDirty(true);
+                  return next;
+                });
                 setGVenue('');
               }}
             >
@@ -190,7 +268,14 @@ export default function ConfigEditor({ canEdit }: Props) {
                 <span>{v}</span>
                 {canEdit && (
                   <button
-                    onClick={() => withDirty(doc => removeVenue(doc, region, v))}
+                    onClick={() => {
+                      setError(null);
+                      setCfg(prev => {
+                        const next = removeVenue(prev, region, v);
+                        if (next !== prev) setDirty(true);
+                        return next;
+                      });
+                    }}
                     className="text-rose-600 text-xs"
                   >
                     remove
@@ -262,7 +347,6 @@ export default function ConfigEditor({ canEdit }: Props) {
               <option value="">— choose venue —</option>
               {(cfg.venues?.[region] || []).map(v => <option key={v} value={v}>{v}</option>)}
             </select>
-            {/* Allow typing a custom venue too */}
             <input
               className="border rounded-lg px-3 py-2 w-full"
               placeholder="or type a custom venue…"
@@ -276,14 +360,55 @@ export default function ConfigEditor({ canEdit }: Props) {
             <button
               className="btn btn-primary"
               disabled={!canEdit || !region || !isValidHHMM(gStart) || !isValidHHMM(gEnd) || gStep <= 0}
-              onClick={() => {
-                withDirty(doc => generateGridSlots(doc, region, {
-                  weekday: gWeekday,
-                  windowStart: gStart,
-                  windowEnd: gEnd,
-                  stepMinutes: gStep,
-                  venueAddress: gVenue || undefined,
-                }));
+              onClick={async () => {
+                // Use your helper to create the in-memory slots (keeps UI consistent)
+                setError(null);
+                setCfg(prev => {
+                  const next = generateGridSlots(prev, region, {
+                    weekday: gWeekday,
+                    windowStart: gStart,
+                    windowEnd: gEnd,
+                    stepMinutes: gStep,
+                    venueAddress: gVenue || undefined,
+                  });
+                  if (next !== prev) setDirty(true);
+                  return next;
+                });
+
+                // Persist live via proxy so Book page sees it
+                // Generate same grid on the server by posting each slot.
+                // To avoid index confusion, we reload after.
+                try {
+                  // naive client-side rebuild of the same grid for persistence
+                  const toMinutes = (hhmm: string) => {
+                    const [hh, mm] = hhmm.split(':').map(Number);
+                    return hh * 60 + mm;
+                  };
+                  const startM = toMinutes(gStart);
+                  const endM = toMinutes(gEnd);
+                  const step = Math.max(5, gStep);
+                  const gen: SlotDef[] = [];
+                  for (let m = startM; m + step <= endM; m += step) {
+                    const hh = Math.floor(m / 60);
+                    const mm = m % 60;
+                    const hh2 = Math.floor((m + step) / 60);
+                    const mm2 = (m + step) % 60;
+                    const pad = (n:number)=>String(n).padStart(2,'0');
+                    gen.push({
+                      weekday: gWeekday,
+                      start: `${pad(hh)}:${pad(mm)}`,
+                      end: `${pad(hh2)}:${pad(mm2)}`,
+                      venueAddress: gVenue || undefined,
+                    });
+                  }
+                  for (const s of gen) {
+                    await proxyAddSlot(region, s);
+                  }
+                  await loadConfig();
+                } catch (e:any) {
+                  console.error(e);
+                  setError(`Generate failed: ${e?.message || 'unknown_error'}`);
+                }
               }}
             >
               Generate slots
@@ -297,7 +422,32 @@ export default function ConfigEditor({ canEdit }: Props) {
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-medium">Timeslots — {region || 'No region selected'}</h2>
           {canEdit && region && (
-            <button className="btn btn-ghost" onClick={() => withDirty(doc => addSlot(doc, region))}>
+            <button
+              className="btn btn-ghost"
+              onClick={async () => {
+                if (!canEdit || !region) return;
+                setError(null);
+                // UI: add a blank slot locally
+                setCfg(prev => {
+                  const next = addSlot(prev, region);
+                  if (next !== prev) setDirty(true);
+                  return next;
+                });
+                // Backend: create a default 30m slot now so indices remain aligned.
+                try {
+                  await proxyAddSlot(region, {
+                    weekday: 1,
+                    start: '09:00',
+                    end: '09:30',
+                    venueAddress: '',
+                  });
+                  await loadConfig();
+                } catch (e:any) {
+                  console.error(e);
+                  setError(`Add slot failed: ${e?.message || 'unknown_error'}`);
+                }
+              }}
+            >
               Add single slot
             </button>
           )}
@@ -308,13 +458,40 @@ export default function ConfigEditor({ canEdit }: Props) {
         ) : filteredSlots.length ? (
           <div className="space-y-2">
             {filteredSlots.map((s, i) => {
+              // Map back to true index in full slots list
               const trueIndex = slots.indexOf(s);
+
+              // Local controlled inputs update UI immediately
+              const onLocal = (patch: Partial<SlotDef>) => {
+                setCfg(prev => {
+                  const next = updateSlot(prev, region, trueIndex, patch);
+                  if (next !== prev) setDirty(true);
+                  return next;
+                });
+              };
+
+              // Persist this row to server
+              const onPersist = async () => {
+                try {
+                  await proxyPatchSlot(region, trueIndex, {
+                    weekday: s.weekday,
+                    start: s.start,
+                    end: s.end,
+                    venueAddress: s.venueAddress || '',
+                  });
+                  await loadConfig();
+                } catch (e:any) {
+                  console.error(e);
+                  setError(`Update failed: ${e?.message || 'unknown_error'}`);
+                }
+              };
+
               return (
-                <div key={trueIndex} className="grid grid-cols-1 sm:grid-cols-6 gap-2 items-center">
+                <div key={`${region}-${trueIndex}`} className="grid grid-cols-1 sm:grid-cols-7 gap-2 items-center">
                   <select
                     disabled={!canEdit}
                     value={s.weekday}
-                    onChange={e => withDirty(doc => updateSlot(doc, region, trueIndex, { weekday: Number(e.target.value) }))}
+                    onChange={e => onLocal({ weekday: Number(e.target.value) })}
                     className="border rounded-lg px-2 py-1"
                   >
                     {DOW.map((d, idx) => <option key={d} value={idx}>{d}</option>)}
@@ -323,7 +500,7 @@ export default function ConfigEditor({ canEdit }: Props) {
                   <input
                     disabled={!canEdit}
                     value={s.start}
-                    onChange={e => withDirty(doc => updateSlot(doc, region, trueIndex, { start: e.target.value }))}
+                    onChange={e => onLocal({ start: e.target.value })}
                     className="border rounded-lg px-2 py-1"
                     placeholder="Start (HH:MM)"
                   />
@@ -331,7 +508,7 @@ export default function ConfigEditor({ canEdit }: Props) {
                   <input
                     disabled={!canEdit}
                     value={s.end}
-                    onChange={e => withDirty(doc => updateSlot(doc, region, trueIndex, { end: e.target.value }))}
+                    onChange={e => onLocal({ end: e.target.value })}
                     className="border rounded-lg px-2 py-1"
                     placeholder="End (HH:MM)"
                   />
@@ -339,18 +516,41 @@ export default function ConfigEditor({ canEdit }: Props) {
                   <input
                     disabled={!canEdit}
                     value={s.venueAddress || ''}
-                    onChange={e => withDirty(doc => updateSlot(doc, region, trueIndex, { venueAddress: e.target.value }))}
+                    onChange={e => onLocal({ venueAddress: e.target.value })}
                     className="border rounded-lg px-2 py-1 sm:col-span-2"
                     placeholder="Venue (optional)"
                   />
 
                   {canEdit && (
-                    <button
-                      onClick={() => withDirty(doc => removeSlot(doc, region, trueIndex))}
-                      className="btn btn-ghost"
-                    >
-                      Remove
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={onPersist}
+                        className="btn btn-primary"
+                        title="Save row"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await proxyRemoveSlot(region, trueIndex);
+                            // Update local UI too
+                            setCfg(prev => {
+                              const next = removeSlot(prev, region, trueIndex);
+                              if (next !== prev) setDirty(true);
+                              return next;
+                            });
+                            await loadConfig();
+                          } catch (e:any) {
+                            console.error(e);
+                            setError(`Remove failed: ${e?.message || 'unknown_error'}`);
+                          }
+                        }}
+                        className="btn btn-ghost"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   )}
                 </div>
               );
