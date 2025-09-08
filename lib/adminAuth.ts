@@ -1,4 +1,4 @@
-// /lib/adminAuth.ts
+// /lib/adminAuth.ts  (SERVER ONLY)
 import 'server-only';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
@@ -12,13 +12,12 @@ const COOKIE_MAX_AGE = 60 * 60 * 8; // 8h
 export function roleFromToken(token: string): AdminRole | null {
   if (!token) return null;
   if (process.env.ADMIN_TOKEN && token === process.env.ADMIN_TOKEN) return 'superadmin';
-  if (process.env.COACH_TOKEN && token === process.env.COACH_TOKEN)   return 'coach';
+  if (process.env.COACH_TOKEN  && token === process.env.COACH_TOKEN)  return 'coach';
   if (process.env.VIEWER_TOKEN && token === process.env.VIEWER_TOKEN) return 'viewer';
   return null;
 }
 
-/** Server-side cookie check (safe to import ONLY in server files) */
-export function isAdminCookie(): boolean {
+export async function isAdminCookie(): Promise<boolean> {
   const jar = cookies();
   const token = jar.get(COOKIE_NAME)?.value || '';
   const role  = jar.get(ROLE_COOKIE)?.value as AdminRole | undefined;
@@ -26,7 +25,7 @@ export function isAdminCookie(): boolean {
   return Boolean(token && role && mapped && mapped === role);
 }
 
-export function getAdminRole(): AdminRole | null {
+export async function getAdminRole(): Promise<AdminRole | null> {
   const jar = cookies();
   const token = jar.get(COOKIE_NAME)?.value || '';
   const role  = jar.get(ROLE_COOKIE)?.value as AdminRole | undefined;
@@ -35,7 +34,6 @@ export function getAdminRole(): AdminRole | null {
   return role;
 }
 
-/** These write cookies on a NextResponse you return from a Server Route */
 export function setAdminCookie(res: NextResponse, token: string) {
   const role = roleFromToken(token);
   if (!role) throw new Error('invalid_token_role');
@@ -52,5 +50,5 @@ export function setAdminCookie(res: NextResponse, token: string) {
 
 export function clearAdminCookie(res: NextResponse) {
   res.cookies.set({ name: COOKIE_NAME, value: '', path: '/', maxAge: 0 });
-  res.cookies.set({ name: ROLE_COOKIE, value: '', path: '/', maxAge: 0 });
+  res.cookies.set({ name: ROLE_COOKIE,  value: '', path: '/', maxAge: 0 });
 }
