@@ -1,6 +1,6 @@
 // /app/admin/login/page.tsx  (SERVER COMPONENT)
 import { isAdminCookie, getAdminRole } from '@/lib/adminAuth';
-import SignInCard from './SignInCard';
+import ClientSignIn from './ClientSignIn';
 
 const styles = {
   pageWrap: { background: '#f1f5f9', minHeight: '100%' },
@@ -66,17 +66,16 @@ export default async function AdminLoginPage() {
   }
 
   return (
-    <div style={styles.pageWrap as React.CSSProperties}>
-      <main style={styles.mainWrap as React.CSSProperties}>
-        <header style={{ marginBottom: 24 }}>
-          <h1 style={styles.title}>Admin Login</h1>
-          <p style={styles.sub}>Enter your one-time admin token.</p>
-        </header>
+  <div style={pageWrap}>
+    <main style={mainWrap}>
+      <header style={{ marginBottom: 24 }}>
+        <h1 style={title}>Admin Login</h1>
+        <p style={sub}>Enter your one-time admin token.</p>
+      </header>
 
-        <section style={styles.card}>
-          <SignInCard />
-        </section>
-      </main>
-    </div>
-  );
-}
+      <section style={card}>
+        <ClientSignIn />
+      </section>
+    </main>
+  </div>
+);
