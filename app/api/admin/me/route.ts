@@ -1,11 +1,9 @@
 // /app/api/admin/me/route.ts
 import { NextResponse } from 'next/server';
-import { getAdminRole, isAdminCookie } from '@/lib/adminAuth';
-
-export const dynamic = 'force-dynamic';
+import { isAdminCookie, getAdminRole } from '@/lib/adminAuth';
 
 export async function GET() {
-  const ok = isAdminCookie();
-  const role = ok ? getAdminRole() : null;
+  const ok = await isAdminCookie();
+  const role = ok ? await getAdminRole() : null;
   return NextResponse.json({ ok, role });
 }
