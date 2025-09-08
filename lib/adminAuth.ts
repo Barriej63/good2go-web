@@ -1,11 +1,11 @@
-// /lib/adminAuth.ts
+'use server';
 import 'server-only';
 
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 const COOKIE_NAME = 'g2g_admin';
-const ROLE_COOKIE = 'g2g_role';
+const ROLE_COOKIE  = 'g2g_role';
 const COOKIE_MAX_AGE = 60 * 60 * 8; // 8h
 
 export type AdminRole = 'superadmin' | 'coach' | 'viewer';
