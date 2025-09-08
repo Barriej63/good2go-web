@@ -1,58 +1,60 @@
+// /app/api/admin/users/route.ts
 import { NextResponse } from 'next/server';
 import { isAdminCookie, getAdminRole, requireSuperadmin } from '@/lib/adminAuth';
-import { getFirestoreSafe } from '@/lib/firebaseAdminFallback';
+import { getAdminDb } from '@/lib/firebaseAdmin';
+import { FieldValue } from 'firebase-admin/firestore';
 
-type AdminUser = {
-  name: string;
-  email: string;
-  role: 'superadmin' | 'coach' | 'viewer';
-  status?: 'active' | 'disabled';
-  createdAt?: string;
-};
+export const dynamic = 'force-dynamic';
+
+function unauthorized() {
+  return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+}
 
 export async function GET() {
   const ok = await isAdminCookie();
-  if (!ok) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  if (!ok) return unauthorized();
 
-  const db = getFirestoreSafe();
-  if (!db) return NextResponse.json({ ok: false, error: 'firestore_init_failed' }, { status: 500 });
+  const db = getAdminDb();
+  const snap = await db.collection('admin_users').orderBy('createdAt', 'desc').limit(500).get();
 
-  const snap = await db.collection('adminUsers').orderBy('createdAt', 'desc').limit(1000).get();
-  const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const items = snap.docs.map(d => {
+    const data = d.data() || {};
+    return {
+      id: d.id,
+      email: data.email || '',
+      role: data.role || 'viewer',
+      createdAt: data.createdAt?.toDate?.()?.toISOString?.() || null,
+    };
+  });
 
   return NextResponse.json({ ok: true, items });
 }
 
 export async function POST(req: Request) {
   const ok = await isAdminCookie();
-  if (!ok) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  if (!ok) return unauthorized();
 
   const role = await getAdminRole();
-  if (!requireSuperadmin(role)) return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
-
-  const db = getFirestoreSafe();
-  if (!db) return NextResponse.json({ ok: false, error: 'firestore_init_failed' }, { status: 500 });
-
-  const body = await req.json();
-  const user: AdminUser = {
-    name: String(body.name || '').trim(),
-    email: String(body.email || '').trim().toLowerCase(),
-    role: (body.role || 'viewer') as AdminUser['role'],
-    status: (body.status || 'active') as 'active' | 'disabled',
-    createdAt: new Date().toISOString(),
-  };
-
-  if (!user.name || !user.email) {
-    return NextResponse.json({ ok: false, error: 'name_email_required' }, { status: 400 });
-  }
-  if (!['superadmin', 'coach', 'viewer'].includes(user.role)) {
-    return NextResponse.json({ ok: false, error: 'invalid_role' }, { status: 400 });
+  if (!requireSuperadmin(role)) {
+    return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
   }
 
-  // Use email as stable doc id (safe-ish). If you prefer auto-id, swap to add().
-  const id = user.email.replace(/[^\w.-]+/g, '_');
-  await db.collection('adminUsers').doc(id).set(user, { merge: true });
+  const body = await req.json().catch(() => ({}));
+  const email = (body?.email || '').trim().toLowerCase();
+  const newRole = body?.role === 'superadmin' || body?.role === 'coach' || body?.role === 'viewer'
+    ? body.role
+    : null;
 
-  return NextResponse.json({ ok: true, id });
+  if (!email || !newRole) {
+    return NextResponse.json({ ok: false, error: 'missing email or role' }, { status: 400 });
+  }
+
+  const db = getAdminDb();
+  const doc = await db.collection('admin_users').add({
+    email,
+    role: newRole,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return NextResponse.json({ ok: true, id: doc.id });
 }
-
