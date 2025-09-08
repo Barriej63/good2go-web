@@ -2,18 +2,20 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 
-/** Small client gate: calls your whoami/me endpoint (no server-only imports here) */
+/** Small client gate */
 function useAdminGate() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [role, setRole] = useState<'superadmin' | 'coach' | 'viewer' | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        // Use whichever you created; both return { ok: boolean } in our setup.
-        const r = await fetch('/api/admin/whoami', { cache: 'no-store' });
+        const r = await fetch('/api/admin/me', { cache: 'no-store' });
         const j = await r.json();
-        if (j?.ok) setAllowed(true);
-        else {
+        if (j?.ok) {
+          setAllowed(true);
+          setRole(j?.role ?? null);
+        } else {
           setAllowed(false);
           if (typeof window !== 'undefined') window.location.href = '/admin/login';
         }
@@ -24,14 +26,14 @@ function useAdminGate() {
     })();
   }, []);
 
-  return allowed;
+  return { allowed, role };
 }
 
 type AdminUser = {
   id: string;
   email?: string;
   role?: 'superadmin' | 'coach' | 'viewer';
-  createdAt?: string; // ISO string if you include it
+  createdAt?: string;
 };
 
 const pageWrap: React.CSSProperties = { background: '#f1f5f9', minHeight: '100%' };
@@ -41,23 +43,30 @@ const labelStyle: React.CSSProperties = { display: 'block', fontSize: 14, fontWe
 const inputStyle: React.CSSProperties = { width: '100%', border: '1px solid #cbd5e1', borderRadius: 12, padding: '10px 12px', height: 42, fontSize: 14 };
 
 export default function UsersPage() {
-  const allowed = useAdminGate();
+  const { allowed, role } = useAdminGate();
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [query, setQuery] = useState('');
 
+  // Add-user form
+  const [email, setEmail] = useState('');
+  const [newRole, setNewRole] = useState<'superadmin' | 'coach' | 'viewer'>('viewer');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      const r = await fetch('/api/admin/users', { cache: 'no-store' });
+      const j = await r.json();
+      const items: AdminUser[] = Array.isArray(j?.items) ? j.items : [];
+      setUsers(items);
+    } catch (e) {
+      console.error('load users failed', e);
+    }
+  }
+
   useEffect(() => {
-    if (allowed !== true) return;
-    (async () => {
-      try {
-        const r = await fetch('/api/admin/users', { cache: 'no-store' });
-        const j = await r.json();
-        const items: AdminUser[] = Array.isArray(j?.items) ? j.items : [];
-        setUsers(items);
-      } catch (e) {
-        console.error('load users failed', e);
-      }
-    })();
+    if (allowed === true) refresh();
   }, [allowed]);
 
   const filtered = useMemo(() => {
@@ -70,6 +79,32 @@ export default function UsersPage() {
     );
   }, [users, query]);
 
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), role: newRole }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setErr(j?.error || 'Failed to add user.');
+      } else {
+        setEmail('');
+        setNewRole('viewer');
+        await refresh();
+      }
+    } catch {
+      setErr('Network error, please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (allowed !== true) return null;
 
   return (
@@ -81,6 +116,45 @@ export default function UsersPage() {
             Search users and review their roles.
           </p>
         </header>
+
+        {/* Add user (superadmin only) */}
+        {role === 'superadmin' && (
+          <section style={card}>
+            <form onSubmit={handleAdd} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 12 }}>
+              <div>
+                <label style={labelStyle}>Email</label>
+                <input
+                  style={inputStyle}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@example.com"
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Role</label>
+                <select
+                  style={inputStyle}
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value as any)}
+                >
+                  <option value="viewer">viewer</option>
+                  <option value="coach">coach</option>
+                  <option value="superadmin">superadmin</option>
+                </select>
+              </div>
+              <div style={{ alignSelf: 'end' }}>
+                <button
+                  type="submit"
+                  disabled={busy || !email.trim()}
+                  className="btn btn-primary"
+                >
+                  {busy ? 'Adding…' : 'Add user'}
+                </button>
+              </div>
+            </form>
+            {err && <div style={{ marginTop: 8, color: '#b91c1c' }}>{err}</div>}
+          </section>
+        )}
 
         {/* Search */}
         <section style={card}>
