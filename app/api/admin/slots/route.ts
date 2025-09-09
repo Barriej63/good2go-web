@@ -1,3 +1,4 @@
+// /app/api/admin/slots/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebaseAdmin';
 import type { Firestore, QueryDocumentSnapshot, DocumentData } from 'firebase-admin/firestore';
@@ -5,7 +6,7 @@ import type { Firestore, QueryDocumentSnapshot, DocumentData } from 'firebase-ad
 export const dynamic = 'force-dynamic';
 
 function unauthorized() {
-  return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 }
 
 function ensureAuth(req: NextRequest) {
@@ -36,8 +37,10 @@ function normalizeWeekday(w: number | string): number {
     friday: 5, fri: 5,
     saturday: 6, sat: 6,
   };
-  return map[w.toLowerCase()] ?? 0;
+  return map[String(w).toLowerCase()] ?? 0;
 }
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const asHHMM = (v: any) => (typeof v === 'string' && HHMM.test(v) ? v : null);
 
 function docIdForRegion(region: string) {
   return `timeslots_${region}`;
@@ -58,7 +61,7 @@ export async function GET(req: NextRequest) {
     out.push({ id, data: d.data() });
   }
 
-  return NextResponse.json({ docs: out });
+  return NextResponse.json({ ok: true, docs: out });
 }
 
 export async function POST(req: NextRequest) {
@@ -68,7 +71,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { region, slot } = body || {};
   if (!region || !slot) {
-    return NextResponse.json({ error: 'missing region or slot' }, { status: 400 });
+    return NextResponse.json({ ok: false, error: 'missing region or slot' }, { status: 400 });
   }
 
   const db = getAdminDb() as unknown as Firestore;
@@ -82,6 +85,10 @@ export async function POST(req: NextRequest) {
     venueAddress: slot.venueAddress || '',
     note: slot.note || '',
   };
+
+  if (!asHHMM(addSlot.start) || !asHHMM(addSlot.end)) {
+    return NextResponse.json({ ok: false, error: 'invalid_time' }, { status: 400 });
+  }
 
   if (!docSnap.exists) {
     await docRef.set({ slots: [addSlot] }, { merge: true });
@@ -99,30 +106,47 @@ export async function PATCH(req: NextRequest) {
   const authErr = ensureAuth(req);
   if (authErr) return authErr;
 
-  const { region, index, venueAddress, note } = await req.json();
+  const body = await req.json();
+  const { region, index } = body || {};
   if (!region || typeof index !== 'number') {
-    return NextResponse.json({ error: 'missing region or index' }, { status: 400 });
+    return NextResponse.json({ ok: false, error: 'missing region or index' }, { status: 400 });
+  }
+
+  // Optional fields we allow to patch:
+  const patch: Partial<SlotDef> = {};
+  if (body.weekday !== undefined) patch.weekday = normalizeWeekday(body.weekday);
+  if (body.start !== undefined) {
+    const s = asHHMM(body.start);
+    if (!s) return NextResponse.json({ ok: false, error: 'invalid_start' }, { status: 400 });
+    patch.start = s;
+  }
+  if (body.end !== undefined) {
+    const e = asHHMM(body.end);
+    if (!e) return NextResponse.json({ ok: false, error: 'invalid_end' }, { status: 400 });
+    patch.end = e;
+  }
+  if (body.venueAddress !== undefined) patch.venueAddress = String(body.venueAddress || '');
+  if (body.note !== undefined) patch.note = String(body.note || '');
+
+  if (!Object.keys(patch).length) {
+    return NextResponse.json({ ok: false, error: 'no_patch' }, { status: 400 });
   }
 
   const db = getAdminDb() as unknown as Firestore;
   const docRef = db.collection('config').doc(docIdForRegion(region));
   const docSnap = await docRef.get();
-  if (!docSnap.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!docSnap.exists) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
 
   const data = docSnap.data() || {};
   const arr: SlotDef[] = Array.isArray(data.slots) ? data.slots : [];
   if (index < 0 || index >= arr.length) {
-    return NextResponse.json({ error: 'index_out_of_range' }, { status: 400 });
+    return NextResponse.json({ ok: false, error: 'index_out_of_range' }, { status: 400 });
   }
 
   const current = arr[index] || {};
-  arr[index] = {
-    ...current,
-    venueAddress: typeof venueAddress === 'string' ? venueAddress : current.venueAddress,
-    note: typeof note === 'string' ? note : current.note,
-  };
-
+  arr[index] = { ...current, ...patch };
   await docRef.set({ slots: arr }, { merge: true });
+
   return NextResponse.json({ ok: true });
 }
 
@@ -134,19 +158,19 @@ export async function DELETE(req: NextRequest) {
   const region = searchParams.get('region');
   const idxStr = searchParams.get('index');
   if (!region || idxStr === null) {
-    return NextResponse.json({ error: 'missing region or index' }, { status: 400 });
+    return NextResponse.json({ ok: false, error: 'missing region or index' }, { status: 400 });
   }
   const index = Number(idxStr);
 
   const db = getAdminDb() as unknown as Firestore;
   const docRef = db.collection('config').doc(docIdForRegion(region));
   const docSnap = await docRef.get();
-  if (!docSnap.exists) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  if (!docSnap.exists) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 });
 
   const data = docSnap.data() || {};
   const arr: SlotDef[] = Array.isArray(data.slots) ? data.slots : [];
   if (index < 0 || index >= arr.length) {
-    return NextResponse.json({ error: 'index_out_of_range' }, { status: 400 });
+    return NextResponse.json({ ok: false, error: 'index_out_of_range' }, { status: 400 });
   }
   arr.splice(index, 1);
   await docRef.set({ slots: arr }, { merge: true });
