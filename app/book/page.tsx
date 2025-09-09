@@ -70,18 +70,29 @@ export default function Page(){
   const [consentName, setConsentName] = useState('');
   const [processing, setProcessing] = useState(false);
 
-  // load slots
-  useEffect(()=>{
-    (async()=>{
-      try{
-        const r = await fetch('/api/slots', { cache: 'no-store' });
-        const j: SlotsResponse = await r.json();
-        setSlotsData(j);
-        if (!region && j.regions.length) setRegion(j.regions[0]);
-        setSlotIdx(0);
-      }catch(e){ console.error('load slots failed', e); }
-    })();
-  },[]);
+  // inside useEffect() that loads slots
+useEffect(() => {
+  (async () => {
+    try {
+      const r = await fetch('/api/slots', { cache: 'no-store' });
+      if (!r.ok) {
+        console.error('load slots failed', r.status);
+        setSlotsData({ regions: [], slots: {} });
+        return;
+      }
+      const j: SlotsResponse = await r.json();
+      setSlotsData({
+        regions: Array.isArray(j?.regions) ? j.regions : [],
+        slots: typeof j?.slots === 'object' && j?.slots ? j.slots : {},
+      });
+      if (!region && Array.isArray(j?.regions) && j.regions.length) setRegion(j.regions[0]);
+      setSlotIdx(0);
+    } catch (e) {
+      console.error('load slots failed', e);
+      setSlotsData({ regions: [], slots: {} });
+    }
+  })();
+}, []);
 
   const slot = useMemo(()=>{
     const arr = slotsData.slots[region] || [];
