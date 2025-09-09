@@ -6,9 +6,8 @@ import {
   addRegion, removeRegion,
   addVenue, removeVenue,
   addSlot, updateSlot, removeSlot,
-  generateGridSlots, isValidHHMM,
-  // ✅ use the network helpers that send x-admin-token to /api/admin/slots
-  netAddSlot, netPatchSlot, netRemoveSlot,
+  isValidHHMM,
+  netAddSlot, netPatchSlot, netRemoveSlot
 } from './ConfigEditor.helpers';
 
 const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -23,6 +22,16 @@ type SlotDef = {
   note?: string;
 };
 
+/** Small helpers */
+const toMin = (hhmm: string) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h*60 + m;
+};
+const fromMin = (m: number) => {
+  const h = Math.floor(m/60), mm = m%60;
+  return `${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+};
+
 export default function ConfigEditor({ canEdit }: Props) {
   // state
   const [cfg, setCfg] = useState<SettingsDoc>({ regions: [], slots: {}, venues: {} });
@@ -33,25 +42,62 @@ export default function ConfigEditor({ canEdit }: Props) {
   const [filter, setFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // generator controls
+  // generator controls (no "Until", generate ONE slot of Step minutes)
   const [gWeekday, setGWeekday] = useState(1);
   const [gStart, setGStart] = useState('17:30');
-  const [gEnd, setGEnd] = useState('20:30');
   const [gStep, setGStep] = useState(10);
   const [gVenue, setGVenue] = useState('');
 
-  /** Util: fresh load from server */
+  /** Load regions/venues + server slots and merge into editor state */
   async function loadConfig() {
     setLoading(true);
     setError(null);
     try {
-      const r = await fetch('/api/admin/config', { cache: 'no-store' });
-      const j = await r.json();
+      // 1) regions/venues (your existing config doc)
+      const r1 = await fetch('/api/admin/config', { cache: 'no-store' });
+      const j1 = await r1.json();
+
+      // 2) timeslots from guarded admin endpoint (docs: timeslots_<Region>)
+      const r2 = await fetch('/api/admin/slots', {
+        headers: { 'x-admin-token': process.env.NEXT_PUBLIC_ADMIN_TOKEN || '' },
+        cache: 'no-store'
+      });
+      const j2 = await r2.json();
+
+      // Build slots map from docs
+      const slotsMap: Record<string, SlotDef[]> = {};
+      if (Array.isArray(j2?.docs)) {
+        for (const d of j2.docs) {
+          const id: string = d?.id || '';
+          // expects "timeslots_<Region>"
+          const match = id.match(/^timeslots[_-](.+)$/i);
+          if (!match) continue;
+          const reg = match[1];
+          const arr = Array.isArray(d?.data?.slots) ? d.data.slots : [];
+          // light dedupe by composite key to avoid accidental doubles
+          const seen = new Set<string>();
+          const cleaned: SlotDef[] = [];
+          for (const s of arr) {
+            const wd = Number(s?.weekday ?? 0);
+            const start = String(s?.start || '');
+            const end = String(s?.end || '');
+            const venueAddress = s?.venueAddress ? String(s.venueAddress) : '';
+            if (!isValidHHMM(start) || !isValidHHMM(end)) continue;
+            const key = `${wd}|${start}|${end}|${venueAddress}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            cleaned.push({ weekday: wd, start, end, venueAddress });
+          }
+          slotsMap[reg] = cleaned;
+        }
+      }
+
       const loaded: SettingsDoc = {
-        regions: j.regions || [],
-        slots: j.slots || {},
-        venues: j.venues || {},
+        regions: Array.isArray(j1?.regions) ? j1.regions : [],
+        venues: (j1?.venues && typeof j1.venues === 'object') ? j1.venues : {},
+        slots: slotsMap
       };
+
       setCfg(loaded);
       setRegion(prev => prev || loaded.regions[0] || '');
       setDirty(false);
@@ -63,9 +109,12 @@ export default function ConfigEditor({ canEdit }: Props) {
     }
   }
 
-  useEffect(() => { loadConfig(); }, []);
+  useEffect(() => {
+    loadConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  /** Save regions + venues (not slots) to /api/admin/config */
+  /** Save regions + venues (timeslots are managed live via admin/slots) */
   async function save() {
     setSaving(true);
     setError(null);
@@ -73,6 +122,8 @@ export default function ConfigEditor({ canEdit }: Props) {
       const payload: SettingsDoc = {
         regions: cfg.regions || [],
         venues: cfg.venues || {},
+        // slots in this POST are ignored by your current API;
+        // we keep them so state is complete locally.
         slots: cfg.slots || {},
       };
       const r = await fetch('/api/admin/config', {
@@ -90,23 +141,23 @@ export default function ConfigEditor({ canEdit }: Props) {
     }
   }
 
-  // --- useMemo selections
-  const venues = useMemo(() => (cfg.venues?.[region] || []), [cfg, region]);
+  /** Stable rows with real server indices (avoid indexOf-reference traps) */
   const slots = useMemo(() => (cfg.slots?.[region] || []), [cfg, region]);
+  const rows = useMemo(() => {
+    const list = slots.map((s, idx) => ({ s, idx }));
+    const q = filter.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(({ s }) =>
+      `${DOW[s.weekday]} ${s.start}-${s.end} ${s.venueAddress || ''}`.toLowerCase().includes(q)
+    );
+  }, [slots, filter]);
 
+  const venues = useMemo(() => (cfg.venues?.[region] || []), [cfg, region]);
   const filteredVenues = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return venues;
     return venues.filter(v => v.toLowerCase().includes(q));
   }, [venues, filter]);
-
-  const filteredSlots = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return slots;
-    return slots.filter(s =>
-      `${DOW[s.weekday]} ${s.start}-${s.end} ${s.venueAddress || ''}`.toLowerCase().includes(q)
-    );
-  }, [slots, filter]);
 
   if (loading) return <div className="text-sm text-slate-600">Loading configuration…</div>;
 
@@ -160,11 +211,7 @@ export default function ConfigEditor({ canEdit }: Props) {
                 const name = prompt('New region name?')?.trim();
                 if (!name) return;
                 setError(null);
-                setCfg(prev => {
-                  const next = addRegion(prev, name);
-                  if (next !== prev) setDirty(true);
-                  return next;
-                });
+                setCfg(prev => { const next = addRegion(prev, name); if (next!==prev) setDirty(true); return next; });
                 setRegion(name);
               }}
             >
@@ -177,11 +224,7 @@ export default function ConfigEditor({ canEdit }: Props) {
                 if (!region) return;
                 if (!confirm(`Remove region "${region}" and all its venues/slots?`)) return;
                 setError(null);
-                setCfg(prev => {
-                  const next = removeRegion(prev, region);
-                  if (next !== prev) setDirty(true);
-                  return next;
-                });
+                setCfg(prev => { const next = removeRegion(prev, region); if (next!==prev) setDirty(true); return next; });
                 setRegion((cfg.regions.find(r => r !== region) || '') as string);
               }}
             >
@@ -210,11 +253,7 @@ export default function ConfigEditor({ canEdit }: Props) {
                 const v = gVenue.trim();
                 if (!v) return;
                 setError(null);
-                setCfg(prev => {
-                  const next = addVenue(prev, region, v);
-                  if (next !== prev) setDirty(true);
-                  return next;
-                });
+                setCfg(prev => { const next = addVenue(prev, region, v); if (next!==prev) setDirty(true); return next; });
                 setGVenue('');
               }}
             >
@@ -233,11 +272,7 @@ export default function ConfigEditor({ canEdit }: Props) {
                   <button
                     onClick={() => {
                       setError(null);
-                      setCfg(prev => {
-                        const next = removeVenue(prev, region, v);
-                        if (next !== prev) setDirty(true);
-                        return next;
-                      });
+                      setCfg(prev => { const next = removeVenue(prev, region, v); if (next!==prev) setDirty(true); return next; });
                     }}
                     className="text-rose-600 text-xs"
                   >
@@ -252,10 +287,10 @@ export default function ConfigEditor({ canEdit }: Props) {
         )}
       </section>
 
-      {/* Generator */}
+      {/* Generator — ONE slot: From + Step (mins) */}
       <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
-        <h2 className="font-medium mb-3">Generate timeslots</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-6 gap-3 items-end">
+        <h2 className="font-medium mb-3">Generate timeslot</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
           <div>
             <label className="block text-sm font-medium mb-1">Weekday</label>
             <select
@@ -273,16 +308,6 @@ export default function ConfigEditor({ canEdit }: Props) {
               className="border rounded-lg px-3 py-2 w-full"
               value={gStart}
               onChange={e=>setGStart(e.target.value)}
-              placeholder="HH:MM"
-              disabled={!canEdit || !region}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Until</label>
-            <input
-              className="border rounded-lg px-3 py-2 w-full"
-              value={gEnd}
-              onChange={e=>setGEnd(e.target.value)}
               placeholder="HH:MM"
               disabled={!canEdit || !region}
             />
@@ -319,35 +344,21 @@ export default function ConfigEditor({ canEdit }: Props) {
             />
           </div>
 
-          <div className="sm:col-span-6">
+          <div className="sm:col-span-5">
             <button
               className="btn btn-primary"
-              disabled={!canEdit || !region || !isValidHHMM(gStart) || !isValidHHMM(gEnd) || gStep <= 0}
+              disabled={!canEdit || !region || !isValidHHMM(gStart) || gStep <= 0}
               onClick={async () => {
                 setError(null);
-                // Update local UI immediately
-                setCfg(prev => {
-                  const next = generateGridSlots(prev, region, {
-                    weekday: gWeekday,
-                    windowStart: gStart,
-                    windowEnd: gEnd,
-                    stepMinutes: gStep,
-                    venueAddress: gVenue || undefined,
-                  });
-                  if (next !== prev) setDirty(true);
-                  return next;
-                });
-
-                // Persist each slot via admin API
                 try {
-                  const toMin = (hhmm:string)=>{ const [h,m]=hhmm.split(':').map(Number); return h*60+m; };
-                  const pad = (n:number)=>String(n).padStart(2,'0');
-                  for (let m = toMin(gStart); m + gStep <= toMin(gEnd); m += gStep) {
-                    const s = `${pad(Math.floor(m/60))}:${pad(m%60)}`;
-                    const eMin = m + gStep;
-                    const e = `${pad(Math.floor(eMin/60))}:${pad(eMin%60)}`;
-                    await netAddSlot(region, { weekday: gWeekday, start: s, end: e, venueAddress: gVenue || '' });
-                  }
+                  const startM = toMin(gStart);
+                  const end = fromMin(startM + Math.max(5, gStep));
+                  await netAddSlot(region, {
+                    weekday: gWeekday,
+                    start: gStart,
+                    end,
+                    venueAddress: gVenue || ''
+                  });
                   await loadConfig();
                 } catch (e:any) {
                   console.error(e);
@@ -355,13 +366,13 @@ export default function ConfigEditor({ canEdit }: Props) {
                 }
               }}
             >
-              Generate slots
+              Generate slot
             </button>
           </div>
         </div>
       </section>
 
-      {/* Existing Slots (editable) */}
+      {/* Existing Slots (editable, with stable indices) */}
       <section className="rounded-xl bg-white shadow-sm border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-medium">Timeslots — {region || 'No region selected'}</h2>
@@ -371,11 +382,6 @@ export default function ConfigEditor({ canEdit }: Props) {
               onClick={async () => {
                 if (!canEdit || !region) return;
                 setError(null);
-                setCfg(prev => {
-                  const next = addSlot(prev, region);
-                  if (next !== prev) setDirty(true);
-                  return next;
-                });
                 try {
                   await netAddSlot(region, { weekday: 1, start: '09:00', end: '09:30', venueAddress: '' });
                   await loadConfig();
@@ -392,22 +398,19 @@ export default function ConfigEditor({ canEdit }: Props) {
 
         {!region ? (
           <p className="text-sm text-slate-500">Select a region first.</p>
-        ) : filteredSlots.length ? (
+        ) : rows.length ? (
           <div className="space-y-2">
-            {filteredSlots.map((s, i) => {
-              const trueIndex = slots.indexOf(s);
-
+            {rows.map(({ s, idx }) => {
               const onLocal = (patch: Partial<SlotDef>) => {
                 setCfg(prev => {
-                  const next = updateSlot(prev, region, trueIndex, patch);
+                  const next = updateSlot(prev, region, idx, patch);
                   if (next !== prev) setDirty(true);
                   return next;
                 });
               };
-
               const onPersist = async () => {
                 try {
-                  await netPatchSlot(region, trueIndex, {
+                  await netPatchSlot(region, idx, {
                     weekday: s.weekday,
                     start: s.start,
                     end: s.end,
@@ -421,14 +424,14 @@ export default function ConfigEditor({ canEdit }: Props) {
               };
 
               return (
-                <div key={`${region}-${trueIndex}`} className="grid grid-cols-1 sm:grid-cols-7 gap-2 items-center">
+                <div key={`${region}-${idx}`} className="grid grid-cols-1 sm:grid-cols-7 gap-2 items-center">
                   <select
                     disabled={!canEdit}
                     value={s.weekday}
                     onChange={e => onLocal({ weekday: Number(e.target.value) })}
                     className="border rounded-lg px-2 py-1"
                   >
-                    {DOW.map((d, idx) => <option key={d} value={idx}>{d}</option>)}
+                    {DOW.map((d, w) => <option key={d} value={w}>{d}</option>)}
                   </select>
 
                   <input
@@ -457,18 +460,12 @@ export default function ConfigEditor({ canEdit }: Props) {
 
                   {canEdit && (
                     <div className="flex items-center gap-2">
-                      <button onClick={onPersist} className="btn btn-primary" title="Save row">
-                        Save
-                      </button>
+                      <button onClick={onPersist} className="btn btn-primary">Save</button>
                       <button
                         onClick={async () => {
                           try {
-                            await netRemoveSlot(region, trueIndex);
-                            setCfg(prev => {
-                              const next = removeSlot(prev, region, trueIndex);
-                              if (next !== prev) setDirty(true);
-                              return next;
-                            });
+                            await netRemoveSlot(region, idx);
+                            setCfg(prev => { const next = removeSlot(prev, region, idx); if (next!==prev) setDirty(true); return next; });
                             await loadConfig();
                           } catch (e:any) {
                             console.error(e);
