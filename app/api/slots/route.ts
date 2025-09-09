@@ -1,11 +1,11 @@
-// app/api/slots/route.ts  — PUBLIC READ-ONLY feed for the Book page
+// app/api/slots/route.ts  (PUBLIC — NO admin token)
 import { NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebaseAdmin';
 
 export const dynamic = 'force-dynamic';
 
 type SlotDef = {
-  weekday: number;           // 0..6
+  weekday: number;           // 0=Sun..6=Sat
   start: string;
   end: string;
   venueAddress?: string | null;
@@ -37,7 +37,7 @@ function regionFromId(id: string): string | null {
   // Accept timeslots_<Region> or timeslots-<Region>
   const m = id.match(/^timeslots[-_](.+)$/i);
   if (!m) return null;
-  return m[1]; // keep original casing/spaces
+  return m[1]; // preserve original casing/spaces
 }
 
 export async function GET() {
@@ -47,7 +47,8 @@ export async function GET() {
   const out: SlotsOut = { regions: [], slots: {} };
 
   for (const doc of snap.docs) {
-    const region = regionFromId(doc.id);
+    const rawId = doc.id;
+    const region = regionFromId(rawId);
     if (!region) continue;
 
     const data = doc.data() as any;
@@ -55,7 +56,7 @@ export async function GET() {
 
     const push = (s: SlotDef) => list.push(s);
 
-    // Style A: explicit array of slots
+    // Style A: explicit array
     if (Array.isArray(data?.slots)) {
       for (const it of data.slots as any[]) {
         const wd = toWeekday(it?.weekday ?? it?.weekdays);
@@ -72,7 +73,7 @@ export async function GET() {
       }
     }
 
-    // Style B: single top-level fields (back-compat)
+    // Style B: single top-level fields
     const wdTop = toWeekday(data?.weekday ?? data?.weekdays);
     if (wdTop != null && data?.start && data?.end) {
       push({
