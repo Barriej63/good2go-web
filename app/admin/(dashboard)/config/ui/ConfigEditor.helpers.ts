@@ -3,68 +3,61 @@ export type SlotDef = {
   weekday: number;
   start: string;
   end: string;
-  venueAddress?: string | null;
-  note?: string | null;
+  venueAddress?: string;
+  note?: string;
 };
 
 export type SettingsDoc = {
   regions: string[];
-  venues: Record<string, string[]>;     // region -> list of venue names/addresses
-  slots:   Record<string, SlotDef[]>;   // region -> list of slots
+  venues: Record<string, string[]>;
+  slots: Record<string, SlotDef[]>;
 };
 
-const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+export const isValidHHMM = (v: string) => HHMM.test(v);
 
-/** ---------- local mutators (UI state) ---------- */
+// ---- local state helpers ----------------------------------------------------
+
 export function addRegion(doc: SettingsDoc, name: string): SettingsDoc {
-  if (!name.trim()) return doc;
-  if (doc.regions.includes(name)) return doc;
+  if (!name || doc.regions.includes(name)) return doc;
   return {
     ...doc,
     regions: [...doc.regions, name],
-    venues: { ...doc.venues, [name]: doc.venues[name] ?? [] },
-    slots:  { ...doc.slots,  [name]: doc.slots[name]  ?? [] },
+    venues: { ...doc.venues, [name]: [] },
+    slots: { ...doc.slots, [name]: [] },
   };
 }
 
 export function removeRegion(doc: SettingsDoc, name: string): SettingsDoc {
-  if (!doc.regions.includes(name)) return doc;
-  const { [name]: _v, ...restVenues } = doc.venues;
-  const { [name]: _s, ...restSlots }  = doc.slots;
-  return {
-    ...doc,
-    regions: doc.regions.filter(r => r !== name),
-    venues: restVenues,
-    slots:  restSlots,
-  };
+  const regions = doc.regions.filter(r => r !== name);
+  const { [name]: _, ...venues } = doc.venues || {};
+  const { [name]: __, ...slots } = doc.slots || {};
+  return { ...doc, regions, venues, slots };
 }
 
-export function addVenue(doc: SettingsDoc, region: string, venue: string): SettingsDoc {
-  if (!region || !venue.trim()) return doc;
-  const list = doc.venues[region] ?? [];
-  if (list.includes(venue)) return doc;
-  return {
-    ...doc,
-    venues: { ...doc.venues, [region]: [...list, venue] }
-  };
+export function addVenue(doc: SettingsDoc, region: string, v: string): SettingsDoc {
+  const cur = doc.venues?.[region] || [];
+  if (!v || cur.includes(v)) return doc;
+  return { ...doc, venues: { ...doc.venues, [region]: [...cur, v] } };
 }
 
-export function removeVenue(doc: SettingsDoc, region: string, venue: string): SettingsDoc {
-  if (!region) return doc;
-  const list = doc.venues[region] ?? [];
-  return {
-    ...doc,
-    venues: { ...doc.venues, [region]: list.filter(v => v !== venue) }
-  };
+export function removeVenue(doc: SettingsDoc, region: string, v: string): SettingsDoc {
+  const cur = doc.venues?.[region] || [];
+  return { ...doc, venues: { ...doc.venues, [region]: cur.filter(x => x !== v) } };
 }
 
 export function addSlot(doc: SettingsDoc, region: string): SettingsDoc {
-  const list = doc.slots[region] ?? [];
-  const next: SlotDef = { weekday: 2, start: '17:30', end: '18:30', venueAddress: '', note: '' };
-  return {
-    ...doc,
-    slots: { ...doc.slots, [region]: [...list, next] }
-  };
+  const cur = doc.slots?.[region] || [];
+  const next: SlotDef = { weekday: 1, start: '17:30', end: '18:30', venueAddress: '' };
+  return { ...doc, slots: { ...doc.slots, [region]: [...cur, next] } };
+}
+
+export function removeSlot(doc: SettingsDoc, region: string, index: number): SettingsDoc {
+  const cur = doc.slots?.[region] || [];
+  if (index < 0 || index >= cur.length) return doc;
+  const copy = cur.slice();
+  copy.splice(index, 1);
+  return { ...doc, slots: { ...doc.slots, [region]: copy } };
 }
 
 export function updateSlot(
@@ -73,31 +66,13 @@ export function updateSlot(
   index: number,
   patch: Partial<SlotDef>
 ): SettingsDoc {
-  const list = doc.slots[region] ?? [];
-  if (index < 0 || index >= list.length) return doc;
-  const next = list.slice();
-  next[index] = { ...next[index], ...patch };
-  return { ...doc, slots: { ...doc.slots, [region]: next } };
+  const cur = doc.slots?.[region] || [];
+  if (index < 0 || index >= cur.length) return doc;
+  const copy = cur.slice();
+  copy[index] = { ...copy[index], ...patch };
+  return { ...doc, slots: { ...doc.slots, [region]: copy } };
 }
 
-export function removeSlot(doc: SettingsDoc, region: string, index: number): SettingsDoc {
-  const list = doc.slots[region] ?? [];
-  if (index < 0 || index >= list.length) return doc;
-  const next = list.slice();
-  next.splice(index, 1);
-  return { ...doc, slots: { ...doc.slots, [region]: next } };
-}
-
-/** ---------- utilities ---------- */
-export function isValidHHMM(v: string) {
-  return /^\d{2}:\d{2}$/.test(v);
-}
-
-function pad2(n: number){ return String(n).padStart(2,'0'); }
-function toMinutes(hhmm: string){ const [h,m]=hhmm.split(':').map(Number); return h*60+m; }
-function fromMinutes(m: number){ const h=Math.floor(m/60), mm=m%60; return `${pad2(h)}:${pad2(mm)}`; }
-
-/** Generate a grid of slots between a window on a weekday. */
 export function generateGridSlots(
   doc: SettingsDoc,
   region: string,
@@ -106,74 +81,72 @@ export function generateGridSlots(
   const { weekday, windowStart, windowEnd, stepMinutes, venueAddress } = opts;
   if (!isValidHHMM(windowStart) || !isValidHHMM(windowEnd) || stepMinutes <= 0) return doc;
 
-  const start = toMinutes(windowStart);
-  const end   = toMinutes(windowEnd);
-  if (end <= start) return doc;
+  const [sh, sm] = windowStart.split(':').map(n => parseInt(n, 10));
+  const [eh, em] = windowEnd.split(':').map(n => parseInt(n, 10));
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
 
-  const list = doc.slots[region] ?? [];
-  const gen: SlotDef[] = [];
+  const acc: SlotDef[] = [];
   for (let t = start; t + stepMinutes <= end; t += stepMinutes) {
-    gen.push({
+    const sH = String(Math.floor(t / 60)).padStart(2, '0');
+    const sM = String(t % 60).padStart(2, '0');
+    const eMin = t + stepMinutes;
+    const eH = String(Math.floor(eMin / 60)).padStart(2, '0');
+    const eM = String(eMin % 60).padStart(2, '0');
+    acc.push({
       weekday,
-      start: fromMinutes(t),
-      end:   fromMinutes(t + stepMinutes),
-      venueAddress: venueAddress ?? '',
-      note: ''
+      start: `${sH}:${sM}`,
+      end: `${eH}:${eM}`,
+      venueAddress: venueAddress || '',
     });
   }
-  return { ...doc, slots: { ...doc.slots, [region]: [...list, ...gen] } };
+
+  return { ...doc, slots: { ...doc.slots, [region]: acc } };
 }
 
-/** ---------- server calls for /api/admin/slots (needs token) ---------- */
+// ---- network helpers (admin slots API) --------------------------------------
 
-const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ADMIN_TOKEN ?? '';
-
-async function authedFetch(input: RequestInfo, init?: RequestInit) {
-  if (!ADMIN_TOKEN) {
-    // Helpful console message if the public token isn't configured.
-    console.warn('NEXT_PUBLIC_ADMIN_TOKEN is not set – admin slot edits will be rejected by the API.');
-  }
-  const headers = new Headers(init?.headers || {});
-  headers.set('content-type', 'application/json');
-  headers.set('x-admin-token', ADMIN_TOKEN);
-  const res = await fetch(input, { ...init, headers });
-  return res;
+function adminToken(): string {
+  const t = process.env.NEXT_PUBLIC_ADMIN_TOKEN || '';
+  return t;
 }
 
-/** Create a single slot on the server */
-export async function apiAddSlot(region: string, slot: SlotDef) {
-  const res = await authedFetch('/api/admin/slots', {
-    method: 'POST',
-    body: JSON.stringify({ region, slot })
+async function api(method: 'POST'|'PATCH'|'DELETE', url: string, body?: any) {
+  const token = adminToken();
+  if (!token) throw new Error('missing_admin_token');
+
+  const r = await fetch(url, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      'x-admin-token': token,
+    },
+    body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) {
-    const j = await safeJson(res);
-    throw new Error(`add_slot_failed${j?.error ? `: ${j.error}` : ''}`);
+
+  const text = await r.text();
+  let json: any = null;
+  try { json = text ? JSON.parse(text) : null; } catch {}
+
+  if (!r.ok || (json && json.ok === false)) {
+    const msg = (json && (json.error || json.message)) || `http_${r.status}`;
+    console.error('Admin slots API error:', { url, method, status: r.status, body, response: json || text });
+    throw new Error(msg);
   }
+  return json;
 }
 
-/** Patch a single slot (by index) */
-export async function apiPatchSlot(region: string, index: number, patch: Partial<SlotDef>) {
-  const res = await authedFetch('/api/admin/slots', {
-    method: 'PATCH',
-    body: JSON.stringify({ region, index, ...patch })
-  });
-  if (!res.ok) {
-    const j = await safeJson(res);
-    throw new Error(`patch_slot_failed${j?.error ? `: ${j.error}` : ''}`);
-  }
+// Call these from the component after updating local state, so the UI feels instant.
+
+export async function netAddSlot(region: string, slot: SlotDef) {
+  return api('POST', '/api/admin/slots', { region, slot });
 }
 
-/** Delete a single slot */
-export async function apiDeleteSlot(region: string, index: number) {
+export async function netPatchSlot(region: string, index: number, patch: Partial<SlotDef>) {
+  return api('PATCH', '/api/admin/slots', { region, index, ...patch });
+}
+
+export async function netRemoveSlot(region: string, index: number) {
   const url = `/api/admin/slots?region=${encodeURIComponent(region)}&index=${index}`;
-  const res = await authedFetch(url, { method: 'DELETE' });
-  if (!res.ok) {
-    const j = await safeJson(res);
-    throw new Error(`delete_slot_failed${j?.error ? `: ${j.error}` : ''}`);
-  }
-}
-
-async function safeJson(res: Response) {
-  try { return await res.json(); } catch { return null; }
+  return api('DELETE', url);
 }
