@@ -1,18 +1,12 @@
 'use client';
 import React, { useEffect, useMemo, useState } from 'react';
 import VenueFromConfig from './ui/VenueFromConfig';
+import { compressSlotsByTime, type CompressedTime, type SlotDef as RawSlot } from '@/lib/compressSlots';
 
-/** Compact types kept as-is */
-type SlotDef = {
-  weekday: number;
-  start: string;
-  end: string;
-  venueAddress?: string | null;
-  note?: string | null;
-};
+/** API types kept as-is */
 type SlotsResponse = {
   regions: string[];
-  slots: Record<string, SlotDef[]>;
+  slots: Record<string, RawSlot[]>;
 };
 
 function pad2(n: number){ return String(n).padStart(2, '0'); }
@@ -53,7 +47,9 @@ export default function Page(){
   // slots
   const [slotsData, setSlotsData] = useState<SlotsResponse>({ regions: [], slots: {} });
   const [region, setRegion] = useState<string>('');
-  const [slotIdx, setSlotIdx] = useState<number>(0);
+
+  // NEW: de-duplicated time selection
+  const [timeKey, setTimeKey] = useState<string>(''); // e.g. "14:00-14:10"
 
   // package
   const [pkg, setPkg] = useState<'baseline'|'package4'>('baseline');
@@ -70,44 +66,54 @@ export default function Page(){
   const [consentName, setConsentName] = useState('');
   const [processing, setProcessing] = useState(false);
 
-  // inside useEffect() that loads slots
-useEffect(() => {
-  (async () => {
-    try {
-      const r = await fetch('/api/slots', { cache: 'no-store' });
-      if (!r.ok) {
-        console.error('load slots failed', r.status);
+  // load slots
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/slots', { cache: 'no-store' });
+        if (!r.ok) {
+          console.error('load slots failed', r.status);
+          setSlotsData({ regions: [], slots: {} });
+          return;
+        }
+        const j: SlotsResponse = await r.json();
+        setSlotsData({
+          regions: Array.isArray(j?.regions) ? j.regions : [],
+          slots: typeof j?.slots === 'object' && j?.slots ? j.slots : {},
+        });
+        if (!region && Array.isArray(j?.regions) && j.regions.length) setRegion(j.regions[0]);
+        setTimeKey(''); // reset time on fresh load
+        setSelectedDates([]);
+      } catch (e) {
+        console.error('load slots failed', e);
         setSlotsData({ regions: [], slots: {} });
-        return;
       }
-      const j: SlotsResponse = await r.json();
-      setSlotsData({
-        regions: Array.isArray(j?.regions) ? j.regions : [],
-        slots: typeof j?.slots === 'object' && j?.slots ? j.slots : {},
-      });
-      if (!region && Array.isArray(j?.regions) && j.regions.length) setRegion(j.regions[0]);
-      setSlotIdx(0);
-    } catch (e) {
-      console.error('load slots failed', e);
-      setSlotsData({ regions: [], slots: {} });
-    }
-  })();
-}, []);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const slot = useMemo(()=>{
-    const arr = slotsData.slots[region] || [];
-    return arr.length ? arr[Math.max(0, Math.min(slotIdx, arr.length-1))] : null;
-  }, [slotsData, region, slotIdx]);
+  // Raw region slots and compressed times
+  const regionSlots: RawSlot[] = useMemo(() => slotsData.slots[region] || [], [slotsData, region]);
+  const compressedTimes: CompressedTime[] = useMemo(
+    () => compressSlotsByTime(regionSlots),
+    [regionSlots]
+  );
+
+  const selectedTime = useMemo(
+    () => compressedTimes.find(t => t.key === timeKey) || null,
+    [compressedTimes, timeKey]
+  );
 
   // calendar months
   const now = new Date();
   const monthA = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthB = new Date(now.getFullYear(), now.getMonth()+1, 1);
 
+  // Only allow dates that match one of the weekdays for the chosen time
   function isAllowed(d: Date){
-    if (!slot) return false;
+    if (!selectedTime) return false;
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return d.getDay() === slot.weekday && d >= today;
+    return selectedTime.days.includes(d.getDay()) && d >= today;
   }
 
   function pick(d: Date){
@@ -118,13 +124,23 @@ useEffect(() => {
   }
 
   const canContinue = Boolean(
-    slot && selectedDates.length &&
+    selectedTime && selectedDates.length &&
     consentOK && consentName.trim().length>1 &&
     clientName.trim().length>1 && yourEmail.trim().length>3
   );
 
+  // Resolve the exact raw slot (for venue) using chosen date's weekday + selected time
+  function findExactSlotForDate(dateIso: string): RawSlot | null {
+    const d = new Date(dateIso + 'T00:00:00');
+    const dow = d.getDay();
+    if (!selectedTime) return null;
+    return regionSlots.find(s =>
+      s.weekday === dow && s.start === selectedTime.start && s.end === selectedTime.end
+    ) || null;
+  }
+
   async function handleContinue(){
-    if (!slot || !canContinue) return;
+    if (!selectedTime || !canContinue) return;
     setProcessing(true);
     try{
       await fetch('/api/consent', {
@@ -134,7 +150,10 @@ useEffect(() => {
       });
 
       const firstDate = selectedDates[0];
-      const slotStr = `${firstDate} ${slot.start}–${slot.end}`;
+      const chosen = findExactSlotForDate(firstDate);
+      const venueAddress = chosen?.venueAddress || '';
+
+      const slotStr = `${firstDate} ${selectedTime.start}–${selectedTime.end}`;
 
       const res = await fetch('/api/book', {
         method: 'POST',
@@ -144,13 +163,13 @@ useEffect(() => {
           email: yourEmail,
           region,
           slot: slotStr,
-          venue: slot.venueAddress || '',
+          venue: venueAddress,
           referringName: medName || '',
           consentAccepted: true,
           dateISO: firstDate,
-          start: slot.start,
-          end: slot.end,
-          venueAddress: slot.venueAddress || '',
+          start: selectedTime.start,
+          end: selectedTime.end,
+          venueAddress,
           medicalEmail: medEmail || null,
           packageType: pkg,
           allDates: selectedDates
@@ -219,6 +238,13 @@ useEffect(() => {
     );
   }
 
+  // Venue for display block (use first picked date if available)
+  const displayVenue = useMemo(() => {
+    const first = selectedDates[0];
+    const chosen = first ? findExactSlotForDate(first) : null;
+    return chosen?.venueAddress || '';
+  }, [selectedDates, regionSlots, selectedTime]);
+
   return (
     <div style={pageWrap}>
       <main style={mainWrap}>
@@ -251,7 +277,7 @@ useEffect(() => {
             <select
               style={selectStyle}
               value={region}
-              onChange={(e)=>{ setRegion(e.target.value); setSlotIdx(0); setSelectedDates([]); }}>
+              onChange={(e)=>{ setRegion(e.target.value); setTimeKey(''); setSelectedDates([]); }}>
               {(slotsData.regions || []).map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
@@ -260,18 +286,23 @@ useEffect(() => {
             <label style={labelStyle}>Time</label>
             <select
               style={selectStyle}
-              value={String(slotIdx)}
-              onChange={(e)=>{ setSlotIdx(Number(e.target.value)); setSelectedDates([]); }}
-              disabled={!(slotsData.slots[region] || []).length}>
-              {(slotsData.slots[region] || []).map((s, i) => (
-                /* Only show start time */
-                <option key={i} value={i}>{s.start}</option>
+              value={timeKey}
+              onChange={(e)=>{ setTimeKey(e.target.value); setSelectedDates([]); }}
+              disabled={!compressedTimes.length}>
+              <option value="">Select a time</option>
+              {compressedTimes.map(t => (
+                <option key={t.key} value={t.key}>{t.label}</option>
               ))}
             </select>
+            {selectedTime && (
+              <p style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+                Available days for {selectedTime.label}: {selectedTime.days.map(d => DOW[d]).join(', ')}
+              </p>
+            )}
           </div>
 
           {/* VENUE (config-aware) */}
-          {slot && (
+          {selectedTime && (
             <div
               style={{
                 ...rowGap,
@@ -284,12 +315,12 @@ useEffect(() => {
               }}
             >
               <strong>Venue:</strong>{' '}
+              {/* For display we resolve via config by time start; if a specific date is picked the submit uses that date's venue */}
               <VenueFromConfig
                 region={region}
-                time={slot.start}
-                fallback={slot.venueAddress || ''}
+                time={selectedTime.start}
+                fallback={displayVenue}
               />
-              {slot.note ? <> — {slot.note}</> : null}
             </div>
           )}
         </section>
