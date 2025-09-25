@@ -1,11 +1,11 @@
 // app/api/worldline/return/route.ts
-// Return webhook/redirect handler with GET + POST support (form + JSON)
+// Worldline return handler: updates booking/payment, sends confirmation email (via SendGrid),
+// and redirects to /success. Hardened for Node runtime & absolute redirects.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFirestoreFromAny } from '@/lib/firebaseAdminFallback';
 
 export const dynamic = 'force-dynamic';
-// ✅ ensure Node runtime (avoids Edge issues with admin SDK / require)
 export const runtime = 'nodejs';
 
 type ReturnMap = Record<string, string | null>;
@@ -48,7 +48,10 @@ async function sendConfirmation(email: string, subject: string, textBody: string
   try {
     const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         from: { email: from },
         personalizations: [{ to: [{ email }] }],
@@ -62,7 +65,7 @@ async function sendConfirmation(email: string, subject: string, textBody: string
     }
     return { ok:true };
   } catch (e) {
-    return { ok:false, error: String(e) };
+    return { ok:false, error:String(e) };
   }
 }
 
@@ -109,12 +112,12 @@ async function updateBookingIfPossible(db: FirebaseFirestore.Firestore, map: Ret
       raw: map,
     }, { merge: true });
   }
+
   return { updated:true, bookingPath: bRef.path };
 }
 
 function successRedirect(req: NextRequest, ref: string) {
   const successPath = process.env.SUCCESS_PAGE_PATH || '/success';
-  // ✅ Always absolute URL (Edge sometimes 500s on relative)
   const url = successPath.startsWith('http')
     ? new URL(successPath)
     : new URL(successPath, req.nextUrl.origin);
@@ -122,20 +125,64 @@ function successRedirect(req: NextRequest, ref: string) {
   return NextResponse.redirect(url, { status: 302 });
 }
 
+/** Build a simple, friendly receipt text from the booking doc + return map */
+function buildReceiptText(booking: any, map: ReturnMap) {
+  const lines = [
+    'Thank you — your Good2Go booking is confirmed.',
+    '',
+    `Reference: ${booking?.ref || map['Reference'] || ''}`,
+    `Name: ${booking?.name || booking?.clientName || ''}`,
+    `Email: ${booking?.email || ''}`,
+    `Region: ${booking?.region || ''}`,
+    `Date: ${booking?.dateISO || ''}`,
+    `Time: ${booking?.start ? `${booking.start}–${booking.end || ''}` : ''}`,
+    `Venue: ${booking?.venueAddress || ''}`,
+  ];
+
+  if (map['Amount']) lines.push(`Amount: ${map['Amount']}`);
+  if (map['TransactionId']) lines.push(`Transaction: ${map['TransactionId']}`);
+
+  lines.push('', 'We look forward to seeing you.', '— Good2Go');
+  return lines.filter(Boolean).join('\n');
+}
+
+async function sendConfirmationFromBookingIfNeeded(
+  db: FirebaseFirestore.Firestore,
+  refOrId: string,
+  map: ReturnMap
+) {
+  const bRef = db.collection('bookings').doc(refOrId);
+  const snap = await bRef.get();
+  if (!snap.exists) return { sent:false, reason:'no_booking' };
+
+  const booking = snap.data() || {};
+  const already = booking.confirmationSentAt ? true : false;
+  if (already) return { sent:false, reason:'already_sent' };
+
+  const emailFromReturn = map['Email'] || map['email'] || null;
+  const email = emailFromReturn || booking.email || booking.yourEmail || null;
+  if (!email) return { sent:false, reason:'no_email' };
+
+  const text = buildReceiptText(booking, map);
+  const res = await sendConfirmation(email, 'Booking Confirmation — Good2Go', text);
+
+  if (res.ok) {
+    await bRef.set({ confirmationSentAt: new Date().toISOString() }, { merge: true });
+    return { sent:true };
+  }
+  return { sent:false, reason:'sendgrid_error', detail: res };
+}
+
 async function handle(map: ReturnMap, req: NextRequest) {
   try {
     const db = getFirestoreFromAny();
 
-    // Persist and update booking, but never let failures crash the redirect
     if (db) {
       await persistPayment(db as any, map).catch(() => {});
       await updateBookingIfPossible(db as any, map).catch(() => {});
-    }
-
-    const email = map['Email'] || map['email'] || null;
-    if (email) {
-      await sendConfirmation(email, 'Booking Confirmation', `Your booking ${map['Reference'] || ''} is confirmed.`)
-        .catch(() => {});
+      // Always try to send a confirmation:
+      const refOrId = (map['Reference'] || map['ref'] || '') as string;
+      if (refOrId) await sendConfirmationFromBookingIfNeeded(db as any, refOrId, map).catch(() => {});
     }
 
     const debug = req.nextUrl.searchParams.get('debug');
@@ -146,7 +193,6 @@ async function handle(map: ReturnMap, req: NextRequest) {
     const ref = (map['Reference'] || '') as string;
     return successRedirect(req, ref);
   } catch (e:any) {
-    // Last-ditch protection — never strand the customer
     try {
       return successRedirect(req, (map?.['Reference'] as string) || '');
     } catch {
