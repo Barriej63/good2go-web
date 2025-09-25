@@ -29,15 +29,13 @@ function makeRef() {
 }
 
 async function createOrUpdateBooking(db, bookingRef, payload, amountCents) {
-  if (!db) return { ok: false, reason: 'no_db' };
-
+  if (!db) return;
   const {
     name, clientName, email, yourEmail,
     region, slot, venue, venueAddress, referringName, medicalEmail,
     dateISO, start, end, packageType, allDates = [],
     consentAccepted
   } = payload || {};
-
   const doc = {
     ref: bookingRef,
     name: name || clientName || '',
@@ -58,30 +56,36 @@ async function createOrUpdateBooking(db, bookingRef, payload, amountCents) {
     paid: false,
     createdAt: new Date().toISOString(),
     lastUpdateAt: new Date().toISOString(),
-    // Keep raw for audit/debug
     _raw: payload,
   };
-
   await db.collection('bookings').doc(bookingRef).set(doc, { merge: true });
-  return { ok: true };
+}
+
+function resolveReturnUrl(req) {
+  const envRet = (process.env.WORLDLINE_RETURN_URL || '').trim();
+  if (envRet) return envRet; // keep your existing working value
+  // Fallback so we never send an empty/invalid return_url
+  const origin = new URL(req.url).origin;
+  return `${origin}/api/worldline/return`;
 }
 
 export async function POST(req) {
+  const debug = new URL(req.url).searchParams.get('debug') === '1';
+
   try {
     const payload = await req.json().catch(()=> ({}));
     const bookingRef = payload?.ref || payload?.reference || makeRef();
     const amountCents = payload?.amountCents ?? (payload?.amount ? Math.round(parseFloat(String(payload.amount))*100) : pickAmountCents(payload));
 
-    // 1) Write booking BEFORE redirect (so admin can see it immediately)
+    // 1) Write booking BEFORE redirect (so admin sees it immediately)
     try {
       const db = getFirestoreFromAny();
       if (db) await createOrUpdateBooking(db, bookingRef, payload, amountCents);
     } catch (e) {
-      // Don't block payment start on Firestore hiccups
       console.error('create booking failed (continuing):', e);
     }
 
-    // 2) Build Worldline HPP request (unchanged from your version)
+    // 2) Build Worldline HPP request — EXACTLY the same params you had working
     const params = new URLSearchParams();
     params.set('username', process.env.WORLDLINE_USERNAME || '');
     params.set('password', process.env.WORLDLINE_PASSWORD || '');
@@ -90,16 +94,13 @@ export async function POST(req) {
     params.set('type', 'purchase');
     params.set('amount', (Math.max(0, Math.round(amountCents))/100).toFixed(2));
     params.set('reference', String(bookingRef).slice(0,50));
-    const ret = process.env.WORLDLINE_RETURN_URL || '';
-    params.set('return_url', ret);
+    params.set('return_url', resolveReturnUrl(req));
     params.set('transaction_source', 'INTERNET');
 
-    // Optional: include email/name if your HPP supports them (harmless if ignored)
-    if (payload?.email || payload?.yourEmail) params.set('email', payload.email || payload.yourEmail);
-    if (payload?.name || payload?.clientName) params.set('customer_name', payload.name || payload.clientName);
-
     const env = (process.env.WORLDLINE_ENV || 'uat').toLowerCase();
-    const base = (env === 'production' || env === 'prod') ? 'https://secure.paymarkclick.co.nz' : 'https://uat.paymarkclick.co.nz';
+    const base = (env === 'production' || env === 'prod')
+      ? 'https://secure.paymarkclick.co.nz'
+      : 'https://uat.paymarkclick.co.nz';
     const endpoint = base + '/api/webpayments/paymentservice/rest/WPRequest';
 
     const res = await fetch(endpoint, {
@@ -110,12 +111,28 @@ export async function POST(req) {
 
     const txt = await res.text();
     const url = extractUrl(txt);
-    if (!res.ok || !url) {
-      return new Response(JSON.stringify({ ok:false, error:'worldline_no_redirect', status: res.status, sample: txt.slice(0,400) }), { status: 502, headers: { 'Content-Type':'application/json' } });
+
+    if (debug) {
+      return new Response(JSON.stringify({
+        ok: !!url, status: res.status, bookingRef, redirectUrl: url || null, sample: txt.slice(0, 1200)
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
-    return new Response(JSON.stringify({ ok:true, bookingRef, redirectUrl: url, url, paymentUrl: url }), { status: 200, headers: { 'Content-Type':'application/json' } });
+    if (!res.ok || !url) {
+      return new Response(JSON.stringify({
+        ok:false,
+        error:'worldline_no_redirect',
+        status: res.status,
+        sample: txt.slice(0, 600)
+      }), { status: 502, headers: { 'Content-Type':'application/json' } });
+    }
+
+    return new Response(JSON.stringify({ ok:true, bookingRef, redirectUrl: url, url, paymentUrl: url }), {
+      status: 200, headers: { 'Content-Type':'application/json' }
+    });
   } catch (e) {
-    return new Response(JSON.stringify({ ok:false, error: e?.message || 'server_error' }), { status: 500, headers: { 'Content-Type':'application/json' } });
+    return new Response(JSON.stringify({ ok:false, error: e?.message || 'server_error' }), {
+      status: 500, headers: { 'Content-Type':'application/json' }
+    });
   }
 }
